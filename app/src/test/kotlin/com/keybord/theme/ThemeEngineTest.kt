@@ -19,6 +19,7 @@ class ThemeEngineTest {
         assertTrue(effectStyles.contains(EffectStyle.RIPPLE))
         assertTrue(effectStyles.contains(EffectStyle.CYBER_NEON))
         assertTrue(effectStyles.contains(EffectStyle.KEY_PULSE))
+        assertTrue(effectStyles.contains(EffectStyle.GLOW_FLOW))
 
         for (theme in themes) {
             assertTrue("Built-in flag must be true for ${theme.id}", theme.isBuiltIn)
@@ -35,25 +36,25 @@ class ThemeEngineTest {
 
     @Test
     fun testThemeJsonRoundTrip() {
-        val original = BuiltInThemes.MECH_GLOW
-        val json = ThemeSerializer.toJson(original)
+        for (original in listOf(BuiltInThemes.MECH_GLOW, BuiltInThemes.AURORA_GLOW_FLOW, BuiltInThemes.RIPPLE_DARK, BuiltInThemes.CYBER_CYAN)) {
+            val json = ThemeSerializer.toJson(original)
+            assertNotNull(json)
+            assertTrue(json.contains("\"schemaVersion\": 1"))
+            assertTrue(json.contains("\"id\": \"${original.id}\""))
+            assertTrue(json.contains("\"effectStyle\": \"${original.effectStyle.name}\""))
 
-        assertNotNull(json)
-        assertTrue(json.contains("\"schemaVersion\": 1"))
-        assertTrue(json.contains("\"id\": \"ext_mech_glow\""))
-        assertTrue(json.contains("\"effectStyle\": \"MECH_GLOW\""))
-
-        val restored = ThemeSerializer.fromJson(json)
-        assertEquals(original.id, restored.id)
-        assertEquals(original.name, restored.name)
-        assertEquals(original.keyHeightDp, restored.keyHeightDp, 0.01f)
-        assertEquals(original.keyCornerRadiusDp, restored.keyCornerRadiusDp, 0.01f)
-        assertEquals(original.trailColor, restored.trailColor)
-        assertEquals(original.keyLabelFont, restored.keyLabelFont)
-        assertEquals(EffectStyle.MECH_GLOW, restored.effectStyle)
-        assertEquals(ThemeCategory.EFFECTS, restored.category)
-        assertNotNull(restored.functionalKeyColor)
-        assertNotNull(restored.accentKeyColor)
+            val restored = ThemeSerializer.fromJson(json)
+            assertEquals(original.id, restored.id)
+            assertEquals(original.name, restored.name)
+            assertEquals(original.keyHeightDp, restored.keyHeightDp, 0.01f)
+            assertEquals(original.keyCornerRadiusDp, restored.keyCornerRadiusDp, 0.01f)
+            assertEquals(original.trailColor, restored.trailColor)
+            assertEquals(original.keyLabelFont, restored.keyLabelFont)
+            assertEquals(original.effectStyle, restored.effectStyle)
+            assertEquals(original.category, restored.category)
+            assertNotNull(restored.functionalKeyColor)
+            assertNotNull(restored.accentKeyColor)
+        }
     }
 
     @Test

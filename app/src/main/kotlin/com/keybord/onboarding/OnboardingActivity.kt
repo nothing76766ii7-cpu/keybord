@@ -15,6 +15,7 @@ import com.keybord.settings.KeybordSettingsActivity
 import com.keybord.theme.BuiltInThemes
 import com.keybord.theme.ThemePreviewView
 import com.keybord.theme.ThemeRepository
+import com.keybord.theme.applySystemBarPadding
 
 /**
  * First Launch Onboarding Flow conforming to PRD Section 4.1:
@@ -40,11 +41,15 @@ class OnboardingActivity : AppCompatActivity() {
         themeRepo = ThemeRepository(this)
 
         val dp = resources.displayMetrics.density
+        val padH = (20 * dp).toInt()
+        val padT = (24 * dp).toInt()
+        val padB = (20 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((20 * dp).toInt(), (24 * dp).toInt(), (20 * dp).toInt(), (20 * dp).toInt())
+            setPadding(padH, padT, padH, padB)
         }
+        root.applySystemBarPadding(padH, padT, padH, padB)
 
         // Top Brand Header
         val brandHeader = LinearLayout(this).apply {

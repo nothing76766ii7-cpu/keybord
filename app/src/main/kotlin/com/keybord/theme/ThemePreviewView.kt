@@ -190,8 +190,11 @@ class ThemePreviewView @JvmOverloads constructor(
             canvas.drawText(key, rect.centerX(), textY, textPaint)
         }
 
-        // Render over-key effects (Mech Glow rainbow edge sweep / Key Pulse)
-        if (theme.effectStyle == EffectStyle.MECH_GLOW || theme.effectStyle == EffectStyle.KEY_PULSE) {
+        // Render over-key effects (Mech Glow rainbow edge sweep / Key Pulse / Glow Flow)
+        if (theme.effectStyle == EffectStyle.MECH_GLOW ||
+            theme.effectStyle == EffectStyle.KEY_PULSE ||
+            theme.effectStyle == EffectStyle.GLOW_FLOW
+        ) {
             effectEngine.drawPreviewEffects(
                 canvas, theme, previewKeyRects, cornerRadius, borderStrokePx, width.toFloat(), height.toFloat()
             )

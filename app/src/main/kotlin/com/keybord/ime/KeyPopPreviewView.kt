@@ -5,6 +5,8 @@ import android.graphics.*
 import android.util.AttributeSet
 import android.view.View
 import com.keybord.theme.BuiltInThemes
+import com.keybord.theme.EffectStyle
+import com.keybord.theme.KeyboardEffectEngine
 import com.keybord.theme.ThemeModel
 
 /**
@@ -29,6 +31,9 @@ class KeyPopPreviewView @JvmOverloads constructor(
         style = Paint.Style.FILL
     }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
+    private val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -74,11 +79,24 @@ class KeyPopPreviewView @JvmOverloads constructor(
         val popTop = bounds.top - popHeight - (6f * density)
         val popRect = RectF(popLeft, popTop, popLeft + popWidth, popTop + popHeight)
 
-        bgPaint.color = theme.keyFaceColor.primaryColor
+        // Composite semi-transparent key face colors over surface so popup remains opaque & legible
+        bgPaint.color = KeyboardEffectEngine.compositeOver(
+            theme.keyFaceColor.primaryColor,
+            theme.keyboardBackground.colorStart
+        )
         borderPaint.color = theme.keyBorderColor
         borderPaint.strokeWidth = 2f * density
 
         val radius = theme.keyCornerRadiusDp * density * scale
+        if (theme.effectStyle == EffectStyle.CYBER_NEON ||
+            theme.effectStyle == EffectStyle.MECH_GLOW ||
+            theme.effectStyle == EffectStyle.GLOW_FLOW
+        ) {
+            haloPaint.color = theme.trailColor
+            haloPaint.alpha = 72
+            haloPaint.strokeWidth = 4.5f * density
+            canvas.drawRoundRect(popRect, radius, radius, haloPaint)
+        }
         canvas.drawRoundRect(popRect, radius, radius, bgPaint)
         canvas.drawRoundRect(popRect, radius, radius, borderPaint)
 

@@ -70,7 +70,8 @@ enum class EffectStyle(val displayName: String, val badge: String) {
     RIPPLE("Ripple Waves", "Ripple"),
     MECH_GLOW("Mech Glow", "Mech Glow"),
     CYBER_NEON("Cyber Neon Glow", "Cyber Glow"),
-    KEY_PULSE("Key Pulse", "Key Pulse")
+    KEY_PULSE("Key Pulse", "Key Pulse"),
+    GLOW_FLOW("Glow Flow", "Glow Flow")
 }
 
 /**

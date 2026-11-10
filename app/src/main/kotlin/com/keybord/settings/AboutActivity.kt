@@ -8,6 +8,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import com.keybord.theme.applySystemBarPadding
 
 /**
  * About screen presenting Keybord version, architecture, and privacy trust signals.
@@ -18,11 +19,15 @@ class AboutActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val dp = resources.displayMetrics.density
+        val padH = (20 * dp).toInt()
+        val padT = (24 * dp).toInt()
+        val padB = (20 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((20 * dp).toInt(), (24 * dp).toInt(), (20 * dp).toInt(), (20 * dp).toInt())
+            setPadding(padH, padT, padH, padB)
         }
+        root.applySystemBarPadding(padH, padT, padH, padB)
 
         val scroll = ScrollView(this).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -41,7 +46,7 @@ class AboutActivity : AppCompatActivity() {
         }
 
         val version = TextView(this).apply {
-            text = "Version 1.0.3 (November 2026)"
+            text = "Version 1.1.3 (November 2026)"
             textSize = 14f
             setTextColor(Color.parseColor("#4285F4"))
             setPadding(0, 0, 0, (20 * dp).toInt())

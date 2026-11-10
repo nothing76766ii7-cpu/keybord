@@ -31,12 +31,14 @@ class CustomThemeEditorActivity : AppCompatActivity() {
         }.copy(id = "custom_" + UUID.randomUUID().toString().take(8), isBuiltIn = false)
 
         val dp = resources.displayMetrics.density
+        val pad = (12 * dp).toInt()
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
+            setPadding(pad, pad, pad, pad)
         }
+        root.applySystemBarPadding(pad, pad, pad, pad)
 
         // Action Bar (Top)
         val topBar = LinearLayout(this).apply {

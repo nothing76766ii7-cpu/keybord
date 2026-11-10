@@ -12,9 +12,20 @@ import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import java.io.File
+
+fun View.applySystemBarPadding(leftPx: Int, topPx: Int, rightPx: Int, bottomPx: Int) {
+    ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
+        val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
+        v.setPadding(leftPx + bars.left, topPx + bars.top, rightPx + bars.right, bottomPx + bars.bottom)
+        insets
+    }
+    ViewCompat.requestApplyInsets(this)
+}
 
 /**
  * Gallery displaying all built-in, extracted, and user-created themes with category filtering.
@@ -25,6 +36,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
     private lateinit var themeRepo: ThemeRepository
     private lateinit var recyclerView: RecyclerView
     private lateinit var categoryBar: LinearLayout
+    private lateinit var titleView: TextView
     private var selectedCategory: ThemeCategory = ThemeCategory.ALL
     private val PICK_THEME_FILE_REQUEST = 1001
 
@@ -33,11 +45,13 @@ class ThemeGalleryActivity : AppCompatActivity() {
         themeRepo = ThemeRepository(this)
 
         val dp = resources.displayMetrics.density
+        val pad = (16 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            setPadding(pad, pad, pad, pad)
         }
+        root.applySystemBarPadding(pad, pad, pad, pad)
 
         // Top Toolbar
         val topBar = LinearLayout(this).apply {
@@ -46,7 +60,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
             setPadding(0, 0, 0, (12 * dp).toInt())
         }
 
-        val title = TextView(this).apply {
+        titleView = TextView(this).apply {
             text = "Theme Gallery"
             textSize = 20f
             setTextColor(Color.WHITE)
@@ -67,7 +81,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
             }
         }
 
-        topBar.addView(title)
+        topBar.addView(titleView)
         topBar.addView(importBtn)
         topBar.addView(createBtn)
         root.addView(topBar)
@@ -99,6 +113,20 @@ class ThemeGalleryActivity : AppCompatActivity() {
         root.addView(recyclerView)
 
         setContentView(root)
+        handleIncomingThemeIntent(intent)
+    }
+
+    private fun handleIncomingThemeIntent(incoming: Intent?) {
+        val uri = incoming?.data ?: return
+        if (incoming.action != Intent.ACTION_VIEW) return
+        try {
+            val json = contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: return
+            val imported = themeRepo.importThemeFromJson(json)
+            themeRepo.setActiveTheme(imported.id)
+            Toast.makeText(this, "Imported & applied '${imported.name}'!", Toast.LENGTH_SHORT).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Invalid theme file: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     }
 
     override fun onResume() {
@@ -138,6 +166,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
         } else {
             allThemes.filter { it.category == selectedCategory || (selectedCategory == ThemeCategory.EFFECTS && it.effectStyle != EffectStyle.NONE) }
         }
+        titleView.text = "Themes (${themes.size})"
         val activeTheme = themeRepo.getActiveTheme()
 
         recyclerView.adapter = ThemeGridAdapter(

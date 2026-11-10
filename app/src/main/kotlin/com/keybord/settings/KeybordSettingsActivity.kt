@@ -12,6 +12,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.keybord.theme.CustomThemeEditorActivity
 import com.keybord.theme.ThemeGalleryActivity
+import com.keybord.theme.applySystemBarPadding
 
 /**
  * Root Settings Activity strictly conforming to PRD Section 4.2:
@@ -27,11 +28,15 @@ class KeybordSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val dp = resources.displayMetrics.density
+        val padH = (16 * dp).toInt()
+        val padT = (20 * dp).toInt()
+        val padB = (16 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((16 * dp).toInt(), (20 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            setPadding(padH, padT, padH, padB)
         }
+        root.applySystemBarPadding(padH, padT, padH, padB)
 
         // Title
         val title = TextView(this).apply {

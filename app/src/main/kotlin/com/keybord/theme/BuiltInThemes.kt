@@ -536,6 +536,8 @@ object BuiltInThemes {
     val RIPPLE_LIGHT = effectTheme("ext_ripple_light", "Ripple Light", isLight = true, EffectStyle.RIPPLE, KeyboardEffectEngine.RIPPLE_LIGHT_PALETTE)
     val MECH_GLOW = effectTheme("ext_mech_glow", "Mech Glow", isLight = false, EffectStyle.MECH_GLOW)
     val MECH_GLOW_LIGHT = effectTheme("ext_mech_glow_light", "Mech Glow Light", isLight = true, EffectStyle.MECH_GLOW)
+    val AURORA_GLOW_FLOW = effectTheme("ext_aurora_flow", "Aurora Glow Flow", isLight = false, EffectStyle.GLOW_FLOW, KeyboardEffectEngine.GLOW_FLOW_AURORA_PALETTE)
+    val EMERALD_GLOW_FLOW = effectTheme("ext_emerald_flow", "Emerald Glow Flow", isLight = false, EffectStyle.GLOW_FLOW, KeyboardEffectEngine.GLOW_FLOW_EMERALD_PALETTE)
 
     // ==================== Extracted Cyber Neon Themes ====================
 
@@ -767,6 +769,8 @@ object BuiltInThemes {
         MECH_GLOW_LIGHT,
         RIPPLE_DARK,
         RIPPLE_LIGHT,
+        AURORA_GLOW_FLOW,
+        EMERALD_GLOW_FLOW,
         // Cyber Neon series
         CYBER_CYAN,
         CYBER_GREEN,

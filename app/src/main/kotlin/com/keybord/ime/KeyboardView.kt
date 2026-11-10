@@ -356,7 +356,11 @@ class KeyboardView @JvmOverloads constructor(
 
         val overStrokePx = kotlin.math.max(1.25f, theme.keyBorderWidthDp) * density
         val hasOverEffect = effectEngine.drawOverKeys(canvas, theme, width.toFloat(), overStrokePx)
-        if (hasUnderEffect || hasOverEffect) {
+        if ((hasUnderEffect || hasOverEffect) &&
+            isAttachedToWindow &&
+            visibility == View.VISIBLE &&
+            windowVisibility == View.VISIBLE
+        ) {
             postInvalidateOnAnimation()
         }
     }
