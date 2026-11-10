@@ -1,23 +1,27 @@
 package com.keybord.settings
 
 import android.app.AlertDialog
-import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
-import android.widget.*
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.keybord.engine.vocab.PersonalDictionaryManager
 import com.keybord.engine.vocab.WordEntry
+import com.keybord.ui.UiKit
 
 /**
- * Personal Dictionary settings screen conforming to PRD Section 4.2:
- * - View / Edit learned words
- * - Add word manually (word, shortcut, frequency)
+ * Personal Dictionary settings screen:
+ * - View / Delete learned & custom words
+ * - Add word manually (word + shortcut)
  * - Sync with Android system UserDictionary
  */
 class PersonalDictionaryActivity : AppCompatActivity() {
@@ -33,54 +37,53 @@ class PersonalDictionaryActivity : AppCompatActivity() {
         val dp = resources.displayMetrics.density
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            setBackgroundColor(UiKit.BG_CANVAS)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
+        UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
 
-        // Top Header
-        val header = LinearLayout(this).apply {
+        val trailingActions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, (12 * dp).toInt())
         }
-
-        val title = TextView(this).apply {
-            text = "Personal Dictionary"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val syncBtn = Button(this).apply {
-            text = "Sync System"
-            textSize = 12f
-            setOnClickListener {
-                dictManager.syncFromSystem(contentResolver)
-                Toast.makeText(this@PersonalDictionaryActivity, "Synchronized with Android UserDictionary", Toast.LENGTH_SHORT).show()
-                refreshList()
+        val syncBtn = UiKit.createPillButton(this, "Sync", filled = false) {
+            dictManager.syncFromSystem(contentResolver)
+            Toast.makeText(this@PersonalDictionaryActivity, "Synchronized with Android UserDictionary", Toast.LENGTH_SHORT).show()
+            refreshList()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (6 * dp).toInt()
             }
         }
-
-        val addBtn = Button(this).apply {
-            text = "+ Add Word"
-            textSize = 12f
-            setBackgroundColor(Color.parseColor("#4285F4"))
-            setTextColor(Color.WHITE)
-            setOnClickListener { showAddWordDialog() }
+        val addBtn = UiKit.createPillButton(this, "+ Add", filled = true) {
+            showAddWordDialog()
         }
+        trailingActions.addView(syncBtn)
+        trailingActions.addView(addBtn)
 
-        header.addView(title)
-        header.addView(syncBtn)
-        header.addView(addBtn)
-        root.addView(header)
+        root.addView(
+            UiKit.createHeaderBar(
+                this,
+                title = "Personal Dictionary",
+                subtitle = "Custom vocabulary & text shortcuts",
+                showBack = true,
+                trailingView = trailingActions
+            )
+        )
 
         emptyText = TextView(this).apply {
-            text = "No custom personal words yet.\nTap '+ Add Word' to add custom vocabulary and shortcuts."
+            text = "No custom words yet.\nTap '+ Add' or keep typing — repeated words auto-learn into suggestions & Glide!"
             textSize = 14f
-            setTextColor(Color.parseColor("#666688"))
+            setTextColor(UiKit.TEXT_SECONDARY)
             gravity = Gravity.CENTER
-            setPadding(0, (40 * dp).toInt(), 0, 0)
+            background = UiKit.roundedDrawable(this@PersonalDictionaryActivity, UiKit.SURFACE_CARD, 16f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((20 * dp).toInt(), (28 * dp).toInt(), (20 * dp).toInt(), (28 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (16 * dp).toInt()
+            }
         }
         root.addView(emptyText)
 
@@ -88,7 +91,8 @@ class PersonalDictionaryActivity : AppCompatActivity() {
             layoutManager = LinearLayoutManager(this@PersonalDictionaryActivity)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+                0,
+                1f
             )
         }
         root.addView(recyclerView)
@@ -163,11 +167,11 @@ class PersonalDictionaryActivity : AppCompatActivity() {
             val row = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setBackgroundColor(Color.parseColor("#1B1B26"))
+                background = UiKit.roundedDrawable(parent.context, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE, 1f)
                 layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = (8 * dp).toInt()
                 }
-                setPadding((14 * dp).toInt(), (12 * dp).toInt(), (14 * dp).toInt(), (12 * dp).toInt())
+                setPadding((14 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
             }
 
             val col = LinearLayout(parent.context).apply {
@@ -176,33 +180,50 @@ class PersonalDictionaryActivity : AppCompatActivity() {
             }
 
             val tvWord = TextView(parent.context).apply {
-                setTextColor(Color.WHITE)
-                textSize = 15f
+                setTextColor(UiKit.TEXT_PRIMARY)
+                textSize = 15.5f
+                typeface = Typeface.DEFAULT_BOLD
             }
 
             val tvShortcut = TextView(parent.context).apply {
-                setTextColor(Color.parseColor("#4285F4"))
+                setTextColor(UiKit.ACCENT_PRIMARY)
                 textSize = 12f
-            }
-
-            val tvDelete = TextView(parent.context).apply {
-                text = "🗑"
-                textSize = 16f
-                setPadding((10 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+                background = UiKit.roundedDrawable(parent.context, UiKit.ACCENT_SOFT, 8f)
+                setPadding((8 * dp).toInt(), (2 * dp).toInt(), (8 * dp).toInt(), (2 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = (4 * dp).toInt()
+                }
+                visibility = View.GONE
             }
 
             col.addView(tvWord)
             col.addView(tvShortcut)
+
+            val tvDelete = TextView(parent.context).apply {
+                text = "✕"
+                setTextColor(UiKit.DANGER_FG)
+                textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                background = UiKit.roundedDrawable(parent.context, UiKit.DANGER_BG, 10f)
+                val sz = (32 * dp).toInt()
+                layoutParams = LinearLayout.LayoutParams(sz, sz)
+            }
+
             row.addView(col)
             row.addView(tvDelete)
-
             return ViewHolder(row, tvWord, tvShortcut, tvDelete)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
             val item = words[position]
             holder.tvWord.text = item.word
-            holder.tvShortcut.text = if (item.shortcut != null) "Shortcut: ${item.shortcut}" else "No shortcut"
+            if (!item.shortcut.isNullOrBlank()) {
+                holder.tvShortcut.text = "Shortcut: ${item.shortcut}"
+                holder.tvShortcut.visibility = View.VISIBLE
+            } else {
+                holder.tvShortcut.visibility = View.GONE
+            }
             holder.tvDelete.setOnClickListener { onDelete(item) }
         }
 

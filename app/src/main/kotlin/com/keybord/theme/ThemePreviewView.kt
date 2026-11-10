@@ -19,7 +19,17 @@ class ThemePreviewView @JvmOverloads constructor(
     var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
         set(value) {
             field = value
+            requestLayout()
             invalidate()
+        }
+
+    var showNumberRow: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                requestLayout()
+                invalidate()
+            }
         }
 
     private val effectEngine = KeyboardEffectEngine()
@@ -42,12 +52,28 @@ class ThemePreviewView @JvmOverloads constructor(
         strokeJoin = Paint.Join.ROUND
     }
 
+    private val numberRow = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "0")
     private val sampleRows = listOf(
         listOf("Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"),
         listOf("A", "S", "D", "F", "G", "H", "J", "K", "L"),
         listOf("⇧", "Z", "X", "C", "V", "B", "N", "M", "⌫"),
         listOf("?123", "☺", " ", "Enter")
     )
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val density = resources.displayMetrics.density
+        val stripDp = 36f
+        val rowCount = if (showNumberRow) 5 else 4
+        val previewScale = 0.72f
+        val desiredDp = stripDp +
+            (theme.keyHeightDp * previewScale * rowCount) +
+            (theme.keyGapVerticalDp * (rowCount + 1)) +
+            (theme.bottomPaddingDp * 0.55f)
+        val desiredPx = (desiredDp * density).toInt()
+        val widthPx = MeasureSpec.getSize(widthMeasureSpec)
+        val heightPx = resolveSize(desiredPx, heightMeasureSpec)
+        setMeasuredDimension(widthPx, heightPx)
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -98,30 +124,49 @@ class ThemePreviewView @JvmOverloads constructor(
             )
         }
 
-        // 3. Layout sample keys cleanly before effect & face passes
-        val keyHeight = (theme.keyHeightDp * density).coerceAtMost((height - stripHeight) / 4.5f)
+        // 3. Layout sample keys accurately (reflects height, padding, gaps & one-handed mode)
+        val rows = if (showNumberRow) listOf(numberRow) + sampleRows else sampleRows
         val cornerRadius = theme.keyCornerRadiusDp * density
         val gapH = theme.keyGapHorizontalDp * density
         val gapV = theme.keyGapVerticalDp * density
         val borderStrokePx = (theme.keyBorderWidthDp * density).coerceAtLeast(0.5f)
+        val bottomPadPx = theme.bottomPaddingDp * density * 0.45f
+        val availKeysHeight = (height - stripHeight - bottomPadPx - (gapV * (rows.size + 1))).coerceAtLeast(32f * density)
+        val maxRowH = availKeysHeight / rows.size.toFloat()
+        val desiredRowH = theme.keyHeightDp * density * 0.72f
+        val keyHeight = if (desiredRowH <= maxRowH) {
+            desiredRowH
+        } else {
+            val scaleFactor = (theme.keyHeightDp / 64f).coerceIn(0.62f, 1.0f)
+            maxRowH * scaleFactor
+        }
+
+        var kbWidth = width.toFloat()
+        var kbOffsetX = 0f
+        if (theme.oneHandedMode.enabled) {
+            kbWidth = width * (theme.oneHandedMode.widthPercent / 100f)
+            if (theme.oneHandedMode.gravityRight) {
+                kbOffsetX = width - kbWidth
+            }
+        }
 
         borderPaint.color = theme.keyBorderColor
         borderPaint.strokeWidth = borderStrokePx
 
-        textPaint.textSize = (theme.keyLabelSizeSp * density).coerceAtMost(keyHeight * 0.45f)
+        textPaint.textSize = (theme.keyLabelSizeSp * density).coerceAtMost(keyHeight * 0.48f)
         textPaint.typeface = theme.keyLabelFont.toTypeface()
 
         secondaryTextPaint.color = theme.keyLabelColorSecondary
-        secondaryTextPaint.textSize = (theme.keyLabelSizeSp * density * 0.65f).coerceAtMost(keyHeight * 0.3f)
+        secondaryTextPaint.textSize = (theme.keyLabelSizeSp * density * 0.62f).coerceAtMost(keyHeight * 0.3f)
         secondaryTextPaint.typeface = theme.keyLabelFont.toTypeface()
 
         previewKeyRects.clear()
         previewKeyLabels.clear()
         var currentY = stripHeight + gapV
-        for (row in sampleRows) {
+        for (row in rows) {
             val totalGaps = (row.size + 1) * gapH
-            val availWidth = width.toFloat() - totalGaps
-            var currentX = gapH
+            val availWidth = kbWidth - totalGaps
+            var currentX = kbOffsetX + gapH
             val isBottomRow = (row.size == 4)
 
             for (key in row) {

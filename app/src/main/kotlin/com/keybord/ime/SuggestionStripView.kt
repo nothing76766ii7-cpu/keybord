@@ -28,6 +28,7 @@ class SuggestionStripView @JvmOverloads constructor(
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
     private lateinit var clipboardBtn: TextView
+    private lateinit var emojiBtn: TextView
     private lateinit var magicBtn: TextView
     private lateinit var candidateContainer: LinearLayout
     private lateinit var micBtn: TextView
@@ -45,12 +46,14 @@ class SuggestionStripView @JvmOverloads constructor(
     private lateinit var magicChipsRow: LinearLayout
     private var magicUndoChip: TextView? = null
     private var isMagicBarVisible = false
+    private var isEmojiActive = false
     private var isMicListening = false
     private var hasRamblerRevertChunk = false
 
     var onCandidateSelected: ((String) -> Unit)? = null
     var onCandidateDeleteRequested: ((String) -> Unit)? = null
     var onClipboardIconClicked: (() -> Unit)? = null
+    var onEmojiIconClicked: (() -> Unit)? = null
     var onSettingsIconClicked: (() -> Unit)? = null
     var onRecentClipDismissed: ((Long) -> Unit)? = null
     var onRecentClipSelected: ((String) -> Unit)? = null
@@ -150,11 +153,15 @@ class SuggestionStripView @JvmOverloads constructor(
             layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (42 * dp).toInt())
         }
 
-        clipboardBtn = createStripIconButton("📋", dp, 17f) {
+        clipboardBtn = createStripIconButton("📋", dp, 16.5f) {
             onClipboardIconClicked?.invoke()
         }
 
-        magicBtn = createStripIconButton("✨", dp, 17f) {
+        emojiBtn = createStripIconButton("😊", dp, 16.5f) {
+            onEmojiIconClicked?.invoke()
+        }
+
+        magicBtn = createStripIconButton("✨", dp, 16.5f) {
             toggleMagicBar()
         }
 
@@ -164,20 +171,26 @@ class SuggestionStripView @JvmOverloads constructor(
             layoutParams = LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
         }
 
-        micBtn = createStripIconButton("🎙", dp, 17f) {
+        micBtn = createStripIconButton("🎙", dp, 16.5f) {
             onMicClicked?.invoke()
         }
 
-        settingsBtn = createStripIconButton("⚙", dp, 17f) {
+        settingsBtn = createStripIconButton("⚙", dp, 16.5f) {
             onSettingsIconClicked?.invoke()
         }
 
         stripRow.addView(clipboardBtn)
+        stripRow.addView(emojiBtn)
         stripRow.addView(magicBtn)
         stripRow.addView(candidateContainer)
         stripRow.addView(micBtn)
         stripRow.addView(settingsBtn)
         addView(stripRow)
+    }
+
+    fun setEmojiPanelActive(active: Boolean) {
+        isEmojiActive = active
+        applyTheme()
     }
 
     private fun createStripIconButton(
@@ -190,7 +203,7 @@ class SuggestionStripView @JvmOverloads constructor(
             text = label
             textSize = sizeSp
             gravity = Gravity.CENTER
-            setPadding((9 * dp).toInt(), 0, (9 * dp).toInt(), 0)
+            setPadding((7 * dp).toInt(), 0, (7 * dp).toInt(), 0)
             layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.MATCH_PARENT)
             setOnClickListener { onClick() }
         }
@@ -296,6 +309,7 @@ class SuggestionStripView @JvmOverloads constructor(
         val textColor = theme.suggestionStripTextColor
         val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
         clipboardBtn.setTextColor(textColor)
+        emojiBtn.setTextColor(if (isEmojiActive) accent else textColor)
         magicBtn.setTextColor(if (isMagicBarVisible) accent else textColor)
         micBtn.setTextColor(if (isMicListening) Color.parseColor("#FF5252") else textColor)
         settingsBtn.setTextColor(textColor)

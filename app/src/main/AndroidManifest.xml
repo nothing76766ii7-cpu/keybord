@@ -76,6 +76,12 @@
             android:label="About Keybord"
             android:theme="@style/Theme.Keybord.NoActionBar" />
 
+        <activity
+            android:name=".settings.KeyboardLayoutCustomizeActivity"
+            android:exported="false"
+            android:label="Height &amp; Buttons"
+            android:theme="@style/Theme.Keybord.NoActionBar" />
+
         <!-- Theme Management Activities -->
         <activity
             android:name=".theme.ThemeGalleryActivity"

@@ -1,6 +1,6 @@
 package com.keybord.settings
 
-import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -8,10 +8,10 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.keybord.theme.applySystemBarPadding
+import com.keybord.ui.UiKit
 
 /**
- * About screen presenting Keybord version, architecture, and privacy trust signals.
+ * About screen presenting Keybord v1.1.7 architecture, features, and privacy trust signals.
  */
 class AboutActivity : AppCompatActivity() {
 
@@ -19,82 +19,105 @@ class AboutActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val dp = resources.displayMetrics.density
-        val padH = (20 * dp).toInt()
-        val padT = (24 * dp).toInt()
-        val padB = (20 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding(padH, padT, padH, padB)
+            setBackgroundColor(UiKit.BG_CANVAS)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
-        root.applySystemBarPadding(padH, padT, padH, padB)
+        UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
+
+        root.addView(
+            UiKit.createHeaderBar(
+                this,
+                title = "About Keybord",
+                subtitle = "Privacy-first smart keyboard engine",
+                showBack = true
+            )
+        )
 
         val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            isVerticalScrollBarEnabled = false
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(0, (4 * dp).toInt(), 0, (16 * dp).toInt())
         }
 
-        // Header
-        val logo = TextView(this).apply {
-            text = "⌨ Keybord"
-            textSize = 28f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, (4 * dp).toInt())
+        // Brand Identity Card
+        val brandCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            background = UiKit.roundedDrawable(this@AboutActivity, UiKit.SURFACE_CARD, 20f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((20 * dp).toInt(), (22 * dp).toInt(), (20 * dp).toInt(), (20 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (14 * dp).toInt()
+            }
         }
-
-        val version = TextView(this).apply {
-            text = "Version 1.1.6 (November 2026)"
-            textSize = 14f
-            setTextColor(Color.parseColor("#4285F4"))
-            setPadding(0, 0, 0, (20 * dp).toInt())
-        }
-
-        val tagLine = TextView(this).apply {
-            text = "The Keyboard That Gets Out of Your Way"
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, (12 * dp).toInt())
-        }
-
-        val intro = TextView(this).apply {
-            text = "Keybord is an Android keyboard built for people who are tired of being managed by their own tools.\n\nDeep visual customisation with no design ceiling, a clipboard that behaves like you own it, and glide typing that learns as you type."
-            textSize = 14f
-            setTextColor(Color.parseColor("#CCCCCC"))
-            setLineSpacing(4f * dp, 1f)
-            setPadding(0, 0, 0, (20 * dp).toInt())
-        }
-
-        content.addView(logo)
-        content.addView(version)
-        content.addView(tagLine)
-        content.addView(intro)
-
-        addInfoCard(
-            content,
-            title = "🔒 Zero Internet Permissions",
-            description = "Keybord does not request the INTERNET permission in AndroidManifest.xml. It has zero capability to send keystrokes, clipboard items, or data across any network. Everything stays strictly on your device."
+        brandCard.addView(
+            TextView(this).apply {
+                text = "⌨"
+                textSize = 40f
+                gravity = Gravity.CENTER
+                background = UiKit.roundedDrawable(this@AboutActivity, UiKit.ACCENT_SOFT, 18f, UiKit.ACCENT_PRIMARY, 1f)
+                val sz = (72 * dp).toInt()
+                layoutParams = LinearLayout.LayoutParams(sz, sz)
+            }
         )
-
-        addInfoCard(
-            content,
-            title = "📋 Unlimited Local Clipboard",
-            description = "Stored locally in SQLite with AES-256-GCM encryption at rest. Pinned items are strictly exempt from retention rules. No hourly erasures."
+        brandCard.addView(
+            TextView(this).apply {
+                text = "Keybord"
+                textSize = 26f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UiKit.TEXT_PRIMARY)
+                gravity = Gravity.CENTER
+                setPadding(0, (10 * dp).toInt(), 0, (2 * dp).toInt())
+            }
         )
-
-        addInfoCard(
-            content,
-            title = "⚡ Clean-room Delight5 Glide Typing",
-            description = "Built using bivariate Gaussian spatial proximity, Dynamic Time Warping (DTW) trajectory alignment, velocity-dependent corner cutting compensation, and beam search decoding."
+        brandCard.addView(
+            TextView(this).apply {
+                text = "Version 1.1.7"
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UiKit.ACCENT_PRIMARY)
+                background = UiKit.roundedDrawable(this@AboutActivity, UiKit.ACCENT_SOFT, 10f)
+                setPadding((12 * dp).toInt(), (4 * dp).toInt(), (12 * dp).toInt(), (4 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                    topMargin = (4 * dp).toInt()
+                }
+            }
         )
+        brandCard.addView(
+            TextView(this).apply {
+                text = "The keyboard that gets out of your way — built for speed, Hinglish fluency, deep layout customisation, and total on-device privacy."
+                textSize = 13.5f
+                setTextColor(UiKit.TEXT_SECONDARY)
+                gravity = Gravity.CENTER
+                setPadding(0, (12 * dp).toInt(), 0, 0)
+            }
+        )
+        content.addView(brandCard)
 
-        addInfoCard(
-            content,
-            title = "🧠 Adaptive Vocabulary Learning",
-            description = "SQLite-backed dynamic language model with n-gram Katz backoff, 3x suggestion elevation, 4x manual correction reinforcement, and 30-day exponential half-life decay."
+        content.addView(UiKit.createSectionLabel(this, "Privacy & Architecture"))
+        content.addView(
+            buildFeatureCard(
+                "🔒 Zero Internet Permission Guarantee",
+                "Keybord does not declare android.permission.INTERNET in its manifest. Your typing history, clipboard items, and learned Hinglish/English vocabulary can never leave your device."
+            )
+        )
+        content.addView(
+            buildFeatureCard(
+                "⚡ What's Inside v1.1.7",
+                "• Bilingual English + Hinglish glide typing, suggestions & auto-correct\n" +
+                    "• Live Height & Buttons Customisation Studio with interactive test preview\n" +
+                    "• Smooth Gboard-grade multi-touch rollover, 360ms secondary long-press & low-latency Space cursor scrub\n" +
+                    "• Built-in Emoji Picker with Recents & Hinglish/English search\n" +
+                    "• Unlimited SQLite AES clipboard with inline & full-screen managers\n" +
+                    "• Voice Rambler cleanup, Magic Writer tones & Rust native core"
+            )
         )
 
         scroll.addView(content)
@@ -102,35 +125,32 @@ class AboutActivity : AppCompatActivity() {
         setContentView(root)
     }
 
-    private fun addInfoCard(parent: LinearLayout, title: String, description: String) {
+    private fun buildFeatureCard(title: String, body: String): LinearLayout {
         val dp = resources.displayMetrics.density
-        val card = LinearLayout(this).apply {
+        return LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#1B1B26"))
-            setPadding((14 * dp).toInt(), (12 * dp).toInt(), (14 * dp).toInt(), (12 * dp).toInt())
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = (12 * dp).toInt()
+            background = UiKit.roundedDrawable(this@AboutActivity, UiKit.SURFACE_CARD, 16f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((16 * dp).toInt(), (14 * dp).toInt(), (16 * dp).toInt(), (14 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (10 * dp).toInt()
             }
-            layoutParams = lp
+            addView(
+                TextView(context).apply {
+                    text = title
+                    textSize = 15f
+                    setTextColor(UiKit.ACCENT_PRIMARY)
+                    typeface = Typeface.DEFAULT_BOLD
+                    setPadding(0, 0, 0, (6 * dp).toInt())
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = body
+                    textSize = 13.5f
+                    setTextColor(UiKit.TEXT_SECONDARY)
+                    setLineSpacing(4f * dp, 1f)
+                }
+            )
         }
-
-        val tvTitle = TextView(this).apply {
-            text = title
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, (4 * dp).toInt())
-        }
-
-        val tvDesc = TextView(this).apply {
-            text = description
-            textSize = 13f
-            setTextColor(Color.parseColor("#A0A4B8"))
-            setLineSpacing(3f * dp, 1f)
-        }
-
-        card.addView(tvTitle)
-        card.addView(tvDesc)
-        parent.addView(card)
     }
 }

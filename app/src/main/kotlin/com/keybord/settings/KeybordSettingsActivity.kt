@@ -2,25 +2,20 @@ package com.keybord.settings
 
 import android.content.Intent
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
-import android.view.View
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.keybord.theme.CustomThemeEditorActivity
+import com.keybord.clipboard.ClipboardActivity
 import com.keybord.theme.ThemeGalleryActivity
-import com.keybord.theme.applySystemBarPadding
+import com.keybord.ui.UiKit
 
 /**
- * Root Settings Activity strictly conforming to PRD Section 4.2:
- * - Appearance
- * - Clipboard
- * - Typing
- * - Personal Dictionary
- * - About
+ * Main Settings Dashboard for Keybord v1.1.7.
  */
 class KeybordSettingsActivity : AppCompatActivity() {
 
@@ -28,150 +23,246 @@ class KeybordSettingsActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
 
         val dp = resources.displayMetrics.density
-        val padH = (16 * dp).toInt()
-        val padT = (20 * dp).toInt()
-        val padB = (16 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding(padH, padT, padH, padB)
+            setBackgroundColor(UiKit.BG_CANVAS)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
-        root.applySystemBarPadding(padH, padT, padH, padB)
+        UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
 
-        // Title
-        val title = TextView(this).apply {
-            text = "Keybord Settings"
-            textSize = 24f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            setPadding(0, 0, 0, (20 * dp).toInt())
-        }
-        root.addView(title)
+        root.addView(
+            UiKit.createHeaderBar(
+                this,
+                title = "Keybord Settings",
+                subtitle = "On-device, smooth & customizable",
+                showBack = false
+            )
+        )
 
         val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                0,
+                1f
+            )
+            isVerticalScrollBarEnabled = false
         }
-        val menuList = LinearLayout(this).apply {
+        val list = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
+            setPadding(0, 0, 0, (16 * dp).toInt())
         }
 
-        // 1. Appearance
-        addMenuItem(
-            menuList,
-            icon = "🎨",
-            title = "Appearance",
-            subtitle = "Theme gallery, 20+ visual controls, import & export",
-            onClick = {
+        // Hero Privacy & Version Card
+        val heroCard = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, UiKit.SURFACE_CARD, 18f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = (14 * dp).toInt() }
+        }
+        val heroTop = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val badgeIcon = TextView(this).apply {
+            text = "⌨"
+            textSize = 22f
+            gravity = Gravity.CENTER
+            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, UiKit.ACCENT_SOFT, 14f, UiKit.ACCENT_PRIMARY, 1f)
+            val sz = (44 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (12 * dp).toInt() }
+        }
+        val heroTextCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        heroTextCol.addView(
+            TextView(this).apply {
+                text = "Keybord v1.1.7"
+                textSize = 18f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UiKit.TEXT_PRIMARY)
+            }
+        )
+        heroTextCol.addView(
+            TextView(this).apply {
+                text = "English + Hinglish • Glide • Emoji • Voice Rambler"
+                textSize = 12f
+                setTextColor(UiKit.TEXT_SECONDARY)
+                setPadding(0, (2 * dp).toInt(), 0, 0)
+            }
+        )
+        val privacyPill = TextView(this).apply {
+            text = "🔒 100% Offline"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(UiKit.SUCCESS_FG)
+            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, UiKit.SUCCESS_BG, 10f)
+            setPadding((9 * dp).toInt(), (4 * dp).toInt(), (9 * dp).toInt(), (4 * dp).toInt())
+        }
+        heroTop.addView(badgeIcon)
+        heroTop.addView(heroTextCol)
+        heroTop.addView(privacyPill)
+        heroCard.addView(heroTop)
+        list.addView(heroCard)
+
+        // Customize Section
+        list.addView(UiKit.createSectionLabel(this, "Look & Layout"))
+        list.addView(
+            buildMenuRow(
+                icon = "📐",
+                iconBg = "#1F2D4D",
+                title = "Height & Buttons",
+                subtitle = "Live interactive preview, key size, corners, gaps & number row"
+            ) {
+                startActivity(Intent(this, KeyboardLayoutCustomizeActivity::class.java))
+            }
+        )
+        list.addView(
+            buildMenuRow(
+                icon = "🎨",
+                iconBg = "#2D1E3E",
+                title = "Appearance & Themes",
+                subtitle = "Theme gallery, animated key effects, custom colors & glow"
+            ) {
                 startActivity(Intent(this, ThemeGalleryActivity::class.java))
             }
         )
 
-        // 2. Clipboard
-        addMenuItem(
-            menuList,
-            icon = "📋",
-            title = "Clipboard",
-            subtitle = "Retention policies, categories, sensitive content rules",
-            onClick = {
-                startActivity(Intent(this, ClipboardSettingsActivity::class.java))
-            }
-        )
-
-        // 3. Typing
-        addMenuItem(
-            menuList,
-            icon = "⚡",
-            title = "Typing",
-            subtitle = "Glide typing, auto-correct, auto-capitalise, period shortcut",
-            onClick = {
+        // Input & Intelligence Section
+        list.addView(UiKit.createSectionLabel(this, "Input & Intelligence"))
+        list.addView(
+            buildMenuRow(
+                icon = "⚡",
+                iconBg = "#1A2E2B",
+                title = "Typing, Glide & Hinglish",
+                subtitle = "Hinglish dictionary, auto-correct, space cursor & learning"
+            ) {
                 startActivity(Intent(this, TypingSettingsActivity::class.java))
             }
         )
-
-        // 4. Personal Dictionary
-        addMenuItem(
-            menuList,
-            icon = "📖",
-            title = "Personal Dictionary",
-            subtitle = "Learned vocabulary, custom shortcuts, system dictionary sync",
-            onClick = {
+        list.addView(
+            buildMenuRow(
+                icon = "📖",
+                iconBg = "#2C241D",
+                title = "Personal Dictionary",
+                subtitle = "Custom words, text expansion shortcuts & system sync"
+            ) {
                 startActivity(Intent(this, PersonalDictionaryActivity::class.java))
             }
         )
 
-        // 5. About
-        addMenuItem(
-            menuList,
-            icon = "ℹ️",
-            title = "About Keybord",
-            subtitle = "Version 1.0 • Zero internet permissions • Local AES encryption",
-            onClick = {
+        // Clipboard Section
+        list.addView(UiKit.createSectionLabel(this, "Clipboard"))
+        list.addView(
+            buildMenuRow(
+                icon = "📋",
+                iconBg = "#1B2A38",
+                title = "Clipboard History Manager",
+                subtitle = "Search, filter, pin & bulk-manage copied items"
+            ) {
+                startActivity(Intent(this, ClipboardActivity::class.java))
+            }
+        )
+        list.addView(
+            buildMenuRow(
+                icon = "🗂",
+                iconBg = "#222436",
+                title = "Clipboard Rules & Storage",
+                subtitle = "Auto-expiry retention policy, max capacity & password safety"
+            ) {
+                startActivity(Intent(this, ClipboardSettingsActivity::class.java))
+            }
+        )
+
+        // Info Section
+        list.addView(UiKit.createSectionLabel(this, "Application"))
+        list.addView(
+            buildMenuRow(
+                icon = "ℹ",
+                iconBg = "#1E2230",
+                title = "About Keybord",
+                subtitle = "Version 1.1.7 • Privacy guarantee & engine overview"
+            ) {
                 startActivity(Intent(this, AboutActivity::class.java))
             }
         )
 
-        scroll.addView(menuList)
+        scroll.addView(list)
         root.addView(scroll)
         setContentView(root)
     }
 
-    private fun addMenuItem(
-        parent: LinearLayout,
+    private fun buildMenuRow(
         icon: String,
+        iconBg: String,
         title: String,
         subtitle: String,
         onClick: () -> Unit
-    ) {
+    ): LinearLayout {
         val dp = resources.displayMetrics.density
-        val item = LinearLayout(this).apply {
+        val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#1B1B26"))
-            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
-            val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = (12 * dp).toInt()
+            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, UiKit.SURFACE_CARD, 16f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((14 * dp).toInt(), (14 * dp).toInt(), (14 * dp).toInt(), (14 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = (9 * dp).toInt()
             }
-            layoutParams = lp
             setOnClickListener { onClick() }
         }
 
         val tvIcon = TextView(this).apply {
             text = icon
-            textSize = 24f
-            setPadding(0, 0, (14 * dp).toInt(), 0)
+            textSize = 19f
+            gravity = Gravity.CENTER
+            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, Color.parseColor(iconBg), 12f)
+            val size = (42 * dp).toInt()
+            layoutParams = LinearLayout.LayoutParams(size, size).apply {
+                marginEnd = (14 * dp).toInt()
+            }
         }
 
-        val textCol = LinearLayout(this).apply {
+        val textContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
 
         val tvTitle = TextView(this).apply {
             text = title
-            textSize = 16f
-            setTextColor(Color.WHITE)
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            textSize = 15.5f
+            setTextColor(UiKit.TEXT_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
         }
 
         val tvSub = TextView(this).apply {
             text = subtitle
-            textSize = 13f
-            setTextColor(Color.parseColor("#8E92A2"))
-            setPadding(0, (2 * dp).toInt(), 0, 0)
+            textSize = 12.5f
+            setTextColor(UiKit.TEXT_SECONDARY)
+            setPadding(0, (3 * dp).toInt(), 0, 0)
         }
 
-        textCol.addView(tvTitle)
-        textCol.addView(tvSub)
+        textContainer.addView(tvTitle)
+        textContainer.addView(tvSub)
 
-        val arrow = TextView(this).apply {
+        val chevron = TextView(this).apply {
             text = "›"
-            textSize = 20f
-            setTextColor(Color.parseColor("#666688"))
+            textSize = 22f
+            setTextColor(UiKit.TEXT_MUTED)
+            setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
         }
 
-        item.addView(tvIcon)
-        item.addView(textCol)
-        item.addView(arrow)
-        parent.addView(item)
+        row.addView(tvIcon)
+        row.addView(textContainer)
+        row.addView(chevron)
+        return row
     }
 }

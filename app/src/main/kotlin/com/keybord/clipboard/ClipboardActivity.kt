@@ -2,6 +2,7 @@ package com.keybord.clipboard
 
 import android.app.AlertDialog
 import android.graphics.Color
+import android.graphics.Typeface
 import android.os.Bundle
 import android.text.Editable
 import android.text.TextWatcher
@@ -9,19 +10,26 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
-import android.widget.*
+import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.keybord.ui.UiKit
 
 /**
- * Full-screen Clipboard Manager accessible from Keybord Settings.
- * Supports prefix search, category filtering, multi-select bulk operations, and pinning.
+ * Full-screen Clipboard Manager accessible from Keybord Settings and Inline Tray.
+ * Features rounded Material dark cards, search pill, category chips, pinning, timestamps, and bulk operations.
  */
 class ClipboardActivity : AppCompatActivity() {
 
     private lateinit var storage: EncryptedClipboardStorage
     private lateinit var searchInput: EditText
+    private lateinit var clearSearchBtn: TextView
     private lateinit var categoryContainer: LinearLayout
     private lateinit var recyclerView: RecyclerView
     private lateinit var emptyView: TextView
@@ -40,77 +48,73 @@ class ClipboardActivity : AppCompatActivity() {
         val dp = resources.displayMetrics.density
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding((16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt(), (16 * dp).toInt())
+            setBackgroundColor(UiKit.BG_CANVAS)
         }
+        UiKit.applyEdgeToEdgePadding(root)
 
-        // Top Toolbar
-        val toolbar = LinearLayout(this).apply {
+        // Top Bar
+        val actionsRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, (12 * dp).toInt())
         }
-
-        val title = TextView(this).apply {
-            text = "Clipboard History"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        val addCatBtn = UiKit.createPillButton(this, "+ Category", filled = false) {
+            showAddCategoryDialog()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (8 * dp).toInt()
+            }
         }
-
-        val clearAllBtn = TextView(this).apply {
-            text = "Clear All"
-            setTextColor(Color.parseColor("#FF5555"))
-            textSize = 14f
-            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
-            setOnClickListener { showClearAllDialog() }
+        val clearAllBtn = UiKit.createPillButton(this, "Clear", filled = false, danger = true) {
+            showClearAllDialog()
         }
+        actionsRow.addView(addCatBtn)
+        actionsRow.addView(clearAllBtn)
 
-        val addCategoryBtn = TextView(this).apply {
-            text = "+ Category"
-            setTextColor(Color.parseColor("#4285F4"))
-            textSize = 14f
-            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
-            setOnClickListener { showAddCategoryDialog() }
-        }
+        root.addView(
+            UiKit.createHeaderBar(
+                activity = this,
+                title = "Clipboard History",
+                subtitle = "AES-encrypted • Pinned items never expire",
+                showBack = true,
+                trailingView = actionsRow
+            )
+        )
 
-        toolbar.addView(title)
-        toolbar.addView(addCategoryBtn)
-        toolbar.addView(clearAllBtn)
-        root.addView(toolbar)
-
-        // Bulk Action Bar (Visible when items selected)
+        // Bulk Action Bar
         bulkActionBar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.parseColor("#252538"))
-            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (12 * dp).toInt(), (8 * dp).toInt())
+            background = UiKit.roundedDrawable(this@ClipboardActivity, UiKit.SURFACE_ELEVATED, 14f, UiKit.ACCENT_PRIMARY, 1f)
+            setPadding((12 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (10 * dp).toInt()
+            }
             visibility = View.GONE
         }
         selectedCountText = TextView(this).apply {
-            setTextColor(Color.WHITE)
+            setTextColor(UiKit.TEXT_PRIMARY)
+            typeface = Typeface.DEFAULT_BOLD
             textSize = 14f
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val bulkCategoryBtn = Button(this).apply {
-            text = "Set Category"
-            textSize = 12f
-            setOnClickListener { showBulkCategoryDialog() }
-        }
-        val bulkDeleteBtn = Button(this).apply {
-            text = "Delete"
-            textSize = 12f
-            setTextColor(Color.parseColor("#FF5555"))
-            setOnClickListener {
-                storage.deleteItems(selectedIds.toList())
-                exitSelectionMode()
-                refreshData()
+        val bulkCategoryBtn = UiKit.createPillButton(this, "Tag", filled = false) {
+            showBulkCategoryDialog()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (6 * dp).toInt()
             }
         }
-        val cancelSelectBtn = Button(this).apply {
-            text = "Cancel"
-            textSize = 12f
-            setOnClickListener { exitSelectionMode() }
+        val bulkDeleteBtn = UiKit.createPillButton(this, "Delete", filled = false, danger = true) {
+            storage.deleteItems(selectedIds.toList())
+            exitSelectionMode()
+            refreshData()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (6 * dp).toInt()
+            }
+        }
+        val cancelSelectBtn = UiKit.createPillButton(this, "Done", filled = true) {
+            exitSelectionMode()
         }
         bulkActionBar.addView(selectedCountText)
         bulkActionBar.addView(bulkCategoryBtn)
@@ -118,29 +122,54 @@ class ClipboardActivity : AppCompatActivity() {
         bulkActionBar.addView(cancelSelectBtn)
         root.addView(bulkActionBar)
 
-        // Search Bar
-        searchInput = EditText(this).apply {
-            hint = "Search clipboard history..."
-            setHintTextColor(Color.parseColor("#666688"))
-            setTextColor(Color.WHITE)
+        // Search Pill
+        val searchBox = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = UiKit.roundedDrawable(this@ClipboardActivity, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE, 1f)
+            setPadding((14 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+        }
+        val searchIcon = TextView(this).apply {
+            text = "🔍"
             textSize = 14f
-            setBackgroundColor(Color.parseColor("#1E1E2C"))
-            setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+            setPadding(0, 0, (8 * dp).toInt(), 0)
+        }
+        searchInput = EditText(this).apply {
+            hint = "Search copied text..."
+            setHintTextColor(UiKit.TEXT_MUTED)
+            setTextColor(UiKit.TEXT_PRIMARY)
+            textSize = 14.5f
+            background = null
+            setSingleLine(true)
+            setPadding(0, (8 * dp).toInt(), 0, (8 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             addTextChangedListener(object : TextWatcher {
                 override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
                 override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {
                     searchQuery = s?.toString() ?: ""
+                    clearSearchBtn.visibility = if (searchQuery.isNotEmpty()) View.VISIBLE else View.GONE
                     refreshData()
                 }
                 override fun afterTextChanged(s: Editable?) {}
             })
         }
-        root.addView(searchInput)
+        clearSearchBtn = TextView(this).apply {
+            text = "✕"
+            textSize = 14f
+            setTextColor(UiKit.TEXT_SECONDARY)
+            visibility = View.GONE
+            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
+            setOnClickListener { searchInput.setText("") }
+        }
+        searchBox.addView(searchIcon)
+        searchBox.addView(searchInput)
+        searchBox.addView(clearSearchBtn)
+        root.addView(searchBox)
 
         // Category Horizontal Scroll
         val categoryScroll = HorizontalScrollView(this).apply {
             isHorizontalScrollBarEnabled = false
-            setPadding(0, (10 * dp).toInt(), 0, (10 * dp).toInt())
+            setPadding(0, (12 * dp).toInt(), 0, (12 * dp).toInt())
         }
         categoryContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -150,11 +179,11 @@ class ClipboardActivity : AppCompatActivity() {
 
         // Empty view
         emptyView = TextView(this).apply {
-            text = "No clipboard entries found."
-            setTextColor(Color.parseColor("#666688"))
+            text = "No clipboard items match this view.\nLong-press items to bulk select & organize."
+            setTextColor(UiKit.TEXT_MUTED)
             textSize = 14f
             gravity = Gravity.CENTER
-            setPadding(0, (40 * dp).toInt(), 0, 0)
+            setPadding(0, (48 * dp).toInt(), 0, 0)
             visibility = View.GONE
         }
         root.addView(emptyView)
@@ -162,11 +191,7 @@ class ClipboardActivity : AppCompatActivity() {
         // RecyclerView
         recyclerView = RecyclerView(this).apply {
             layoutManager = LinearLayoutManager(this@ClipboardActivity)
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
         }
         root.addView(recyclerView)
 
@@ -183,18 +208,23 @@ class ClipboardActivity : AppCompatActivity() {
         categories.addAll(storage.getCategories().map { it.name })
 
         for (cat in categories) {
+            val isSelected = (cat == activeCategory)
             val chip = TextView(this).apply {
                 text = cat
                 textSize = 13f
-                val isSelected = (cat == activeCategory)
-                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#AAACB0"))
-                setBackgroundColor(if (isSelected) Color.parseColor("#4285F4") else Color.parseColor("#1E1E2C"))
-                setPadding((14 * dp).toInt(), (6 * dp).toInt(), (14 * dp).toInt(), (6 * dp).toInt())
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (isSelected) Color.WHITE else UiKit.TEXT_SECONDARY)
+                background = UiKit.roundedDrawable(
+                    this@ClipboardActivity,
+                    if (isSelected) UiKit.ACCENT_PRIMARY else UiKit.SURFACE_CARD,
+                    12f,
+                    if (isSelected) null else UiKit.BORDER_SUBTLE,
+                    1f
+                )
+                setPadding((14 * dp).toInt(), (7 * dp).toInt(), (14 * dp).toInt(), (7 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = (8 * dp).toInt()
                 }
-                layoutParams = lp
-
                 setOnClickListener {
                     activeCategory = cat
                     setupCategories()
@@ -226,7 +256,6 @@ class ClipboardActivity : AppCompatActivity() {
                     if (isSelectionMode) {
                         toggleSelection(item.id)
                     } else {
-                        // Copy to clipboard or show details
                         val mgr = KeybordClipboardManager(this, storage)
                         mgr.copyToClipboard(item.text)
                         Toast.makeText(this, "Copied to clipboard", Toast.LENGTH_SHORT).show()
@@ -253,14 +282,8 @@ class ClipboardActivity : AppCompatActivity() {
     }
 
     private fun toggleSelection(id: Long) {
-        if (selectedIds.contains(id)) {
-            selectedIds.remove(id)
-        } else {
-            selectedIds.add(id)
-        }
-        if (selectedIds.isEmpty()) {
-            exitSelectionMode()
-        } else {
+        if (selectedIds.contains(id)) selectedIds.remove(id) else selectedIds.add(id)
+        if (selectedIds.isEmpty()) exitSelectionMode() else {
             updateBulkBar()
             refreshData()
         }
@@ -292,9 +315,7 @@ class ClipboardActivity : AppCompatActivity() {
     }
 
     private fun showAddCategoryDialog() {
-        val input = EditText(this).apply {
-            hint = "Category Name"
-        }
+        val input = EditText(this).apply { hint = "Category Name" }
         AlertDialog.Builder(this)
             .setTitle("New Category")
             .setView(input)
@@ -312,12 +333,12 @@ class ClipboardActivity : AppCompatActivity() {
     private fun showClearAllDialog() {
         AlertDialog.Builder(this)
             .setTitle("Clear Clipboard")
-            .setMessage("Do you want to clear all unpinned items, or delete everything including pinned items?")
-            .setPositiveButton("Clear Unpinned Only") { _, _ ->
+            .setMessage("Clear unpinned items only, or delete everything including pinned items?")
+            .setPositiveButton("Clear Unpinned") { _, _ ->
                 storage.clearAll(includePinned = false)
                 refreshData()
             }
-            .setNeutralButton("Delete All (Inc. Pinned)") { _, _ ->
+            .setNeutralButton("Delete All") { _, _ ->
                 storage.clearAll(includePinned = true)
                 refreshData()
             }
@@ -340,6 +361,7 @@ class ClipboardActivity : AppCompatActivity() {
             val checkBox: CheckBox,
             val tvText: TextView,
             val tvCategory: TextView,
+            val tvTime: TextView,
             val tvPin: TextView,
             val tvDelete: TextView
         ) : RecyclerView.ViewHolder(view)
@@ -349,16 +371,13 @@ class ClipboardActivity : AppCompatActivity() {
             val row = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setBackgroundColor(Color.parseColor("#1B1B26"))
                 layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    setMargins(0, 0, 0, (8 * dp).toInt())
+                    setMargins(0, 0, 0, (10 * dp).toInt())
                 }
-                setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                setPadding((14 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
             }
 
-            val cb = CheckBox(parent.context).apply {
-                visibility = View.GONE
-            }
+            val cb = CheckBox(parent.context).apply { visibility = View.GONE }
 
             val contentCol = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
@@ -366,29 +385,43 @@ class ClipboardActivity : AppCompatActivity() {
             }
 
             val tvText = TextView(parent.context).apply {
-                setTextColor(Color.WHITE)
-                textSize = 14f
-                maxLines = 3
+                setTextColor(UiKit.TEXT_PRIMARY)
+                textSize = 14.5f
+                maxLines = 4
+                setLineSpacing(2f * dp, 1f)
             }
 
-            val tvCat = TextView(parent.context).apply {
-                setTextColor(Color.parseColor("#4285F4"))
-                textSize = 11f
-                setPadding(0, (4 * dp).toInt(), 0, 0)
+            val metaRow = LinearLayout(parent.context).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, (7 * dp).toInt(), 0, 0)
             }
+            val tvCat = TextView(parent.context).apply {
+                setTextColor(UiKit.ACCENT_PRIMARY)
+                textSize = 11f
+                typeface = Typeface.DEFAULT_BOLD
+                background = UiKit.roundedDrawable(parent.context, UiKit.ACCENT_SOFT, 8f)
+                setPadding((8 * dp).toInt(), (2 * dp).toInt(), (8 * dp).toInt(), (2 * dp).toInt())
+            }
+            val tvTime = TextView(parent.context).apply {
+                setTextColor(UiKit.TEXT_MUTED)
+                textSize = 11.5f
+                setPadding((8 * dp).toInt(), 0, 0, 0)
+            }
+            metaRow.addView(tvCat)
+            metaRow.addView(tvTime)
 
             contentCol.addView(tvText)
-            contentCol.addView(tvCat)
+            contentCol.addView(metaRow)
 
             val tvPin = TextView(parent.context).apply {
                 textSize = 16f
-                setPadding((8 * dp).toInt(), 0, (8 * dp).toInt(), 0)
+                setPadding((10 * dp).toInt(), (6 * dp).toInt(), (8 * dp).toInt(), (6 * dp).toInt())
             }
-
             val tvDel = TextView(parent.context).apply {
                 text = "🗑"
                 textSize = 16f
-                setPadding((8 * dp).toInt(), 0, 0, 0)
+                setPadding((6 * dp).toInt(), (6 * dp).toInt(), (4 * dp).toInt(), (6 * dp).toInt())
             }
 
             row.addView(cb)
@@ -396,7 +429,7 @@ class ClipboardActivity : AppCompatActivity() {
             row.addView(tvPin)
             row.addView(tvDel)
 
-            return ViewHolder(row, cb, tvText, tvCat, tvPin, tvDel)
+            return ViewHolder(row, cb, tvText, tvCat, tvTime, tvPin, tvDel)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -406,14 +439,22 @@ class ClipboardActivity : AppCompatActivity() {
             holder.checkBox.visibility = if (isSelectionMode) View.VISIBLE else View.GONE
             holder.checkBox.isChecked = isSelected
             holder.tvText.text = item.text
-            holder.tvCategory.text = "[${item.category}]"
-            holder.tvPin.text = if (item.isPinned) "📌" else "⚪"
+            holder.tvCategory.text = item.category
+            holder.tvTime.text = formatTime(item.createdAt)
+            holder.tvPin.text = if (item.isPinned) "📌" else "📍"
+            holder.tvPin.alpha = if (item.isPinned) 1f else 0.45f
 
-            holder.view.setBackgroundColor(
-                if (isSelected) Color.parseColor("#2A3A55")
-                else if (item.isPinned) Color.parseColor("#222336")
-                else Color.parseColor("#1B1B26")
-            )
+            val fill = when {
+                isSelected -> UiKit.SURFACE_ELEVATED
+                item.isPinned -> Color.parseColor("#1B2133")
+                else -> UiKit.SURFACE_CARD
+            }
+            val stroke = when {
+                isSelected -> UiKit.ACCENT_PRIMARY
+                item.isPinned -> Color.argb(110, Color.red(UiKit.ACCENT_PRIMARY), Color.green(UiKit.ACCENT_PRIMARY), Color.blue(UiKit.ACCENT_PRIMARY))
+                else -> UiKit.BORDER_SUBTLE
+            }
+            holder.view.background = UiKit.roundedDrawable(holder.view.context, fill, 16f, stroke, 1f)
 
             holder.view.setOnClickListener { onItemClick(item) }
             holder.view.setOnLongClickListener {
@@ -425,5 +466,15 @@ class ClipboardActivity : AppCompatActivity() {
         }
 
         override fun getItemCount(): Int = items.size
+
+        private fun formatTime(createdAt: Long): String {
+            val diffMin = ((System.currentTimeMillis() - createdAt).coerceAtLeast(0L) / 60_000L)
+            return when {
+                diffMin < 1L -> "Just now"
+                diffMin < 60L -> "${diffMin}m ago"
+                diffMin < 1440L -> "${diffMin / 60L}h ago"
+                else -> "${diffMin / 1440L}d ago"
+            }
+        }
     }
 }

@@ -17,6 +17,7 @@ class AdaptiveVocabularyEngine(
 
     val storage = UserHistoryStorage(context, config, inMemory)
     val personalDictionary = PersonalDictionaryManager(context)
+    var staticLexicon: com.keybord.engine.glide.TrieLexicon? = null
 
     fun getBigramScore(prevWord: String, word: String): Float =
         storage.getBigramScore(prevWord, word)
@@ -33,7 +34,7 @@ class AdaptiveVocabularyEngine(
         val cleanWord = word.trim().lowercase()
         if (cleanWord.length <= 1 && !cleanWord.matches(Regex("[a-z0-9]"))) return
 
-        val isKnownInStatic = staticWordLookup(cleanWord)
+        val isKnownInStatic = staticWordLookup(cleanWord) || (staticLexicon?.contains(cleanWord) == true)
         val isOov = !isKnownInStatic && !personalDictionary.contains(cleanWord)
 
         val countDelta = when (event) {
@@ -64,7 +65,6 @@ class AdaptiveVocabularyEngine(
 
     /**
      * User tapped a suggested word in the keyboard candidate strip.
-     * PRD: Boosts word frequency with 3x multiplier.
      */
     fun onSuggestionSelected(selectedWord: String, contextWords: List<String>) {
         onWordCommitted(selectedWord, contextWords, LearningEvent.SUGGESTION_ACCEPTED)
@@ -72,7 +72,6 @@ class AdaptiveVocabularyEngine(
 
     /**
      * User backspaced an autocorrected word and manually typed what they intended.
-     * PRD: Demotes old word, elevates replacement with 4x multiplier.
      */
     fun onManualCorrection(revertedWord: String, correctedWord: String, contextWords: List<String>) {
         storage.recordRejection(revertedWord, config.rejectionPenalty)
@@ -95,10 +94,7 @@ class AdaptiveVocabularyEngine(
     }
 
     /**
-     * Predicts next words based on preceding context (Katz backoff).
-     * 1. Trigram context: P(W | prev2, prev1)
-     * 2. Bigram context: P(W | prev1)
-     * 3. Frequent unigrams
+     * Predicts next words based on preceding context (Katz backoff + English/Hinglish hints).
      */
     fun predictNextWords(contextWords: List<String>, maxCandidates: Int = 3): List<PredictionCandidate> {
         val candidates = mutableListOf<PredictionCandidate>()
@@ -129,7 +125,24 @@ class AdaptiveVocabularyEngine(
             }
         }
 
-        // 3. Fallback to frequent unigrams
+        // 3. Static English + Hinglish contextual bigram fallback when history is sparse
+        if (prev1 != null && candidates.size < maxCandidates) {
+            val hints = com.keybord.engine.glide.TrieLexicon.getContextualFallbackPredictions(prev1)
+            for ((idx, hint) in hints.withIndex()) {
+                if (seenWords.add(hint)) {
+                    candidates.add(
+                        PredictionCandidate(
+                            hint,
+                            0.55f - (idx * 0.02f),
+                            CandidateSource.STATIC_DICTIONARY,
+                            contextMatchOrder = 1
+                        )
+                    )
+                }
+            }
+        }
+
+        // 4. Fallback to frequent user unigrams
         if (candidates.size < maxCandidates) {
             val topUnigrams = storage.searchPrefix("", limit = maxCandidates - candidates.size)
             for (entry in topUnigrams) {
@@ -151,8 +164,8 @@ class AdaptiveVocabularyEngine(
     }
 
     /**
-     * Ranks prefix completion candidates blending shortcuts, static lexicon,
-     * and user history n-grams with recency half-life decay.
+     * Ranks prefix completion candidates blending shortcuts, user history n-grams,
+     * and static English + Hinglish lexicon completions.
      */
     fun rankPrefixCompletions(
         prefix: String,
@@ -188,7 +201,7 @@ class AdaptiveVocabularyEngine(
         val prev1 = contextWords.lastOrNull()?.lowercase()?.trim()
 
         for (entry in userEntries) {
-            if (!seen.add(entry.word)) continue
+            if (!seen.add(entry.word.lowercase())) continue
 
             val penalty = storage.getRejectionPenalty(entry.word)
             val effectiveCount = (entry.count - penalty).coerceAtLeast(1)
@@ -206,8 +219,8 @@ class AdaptiveVocabularyEngine(
             }
 
             val totalScore = config.frequencyWeight * freqScore +
-                    config.recencyWeight * recencyScore +
-                    config.contextWeight * contextScore
+                config.recencyWeight * recencyScore +
+                config.contextWeight * contextScore
 
             results.add(
                 PredictionCandidate(
@@ -217,6 +230,26 @@ class AdaptiveVocabularyEngine(
                     contextMatchOrder = if (contextScore > 0f) 1 else 0
                 )
             )
+        }
+
+        // Blend static English + Hinglish completions when user history alone doesn't fill strip
+        val lex = staticLexicon
+        if (lex != null && results.size < maxCandidates) {
+            val staticMatches = lex.searchPrefix(cleanPrefix, limit = maxCandidates * 2)
+            val maxFreqLn = ln(lex.maxFrequency + 1f).coerceAtLeast(1f)
+            for ((word, freq) in staticMatches) {
+                if (!seen.add(word.lowercase())) continue
+                val normFreq = (ln(freq + 1f) / maxFreqLn).coerceIn(0f, 1f)
+                val exactMatchBoost = if (word.equals(cleanPrefix, ignoreCase = true)) 0.14f else 0f
+                results.add(
+                    PredictionCandidate(
+                        word = word,
+                        score = (0.30f + 0.34f * normFreq + exactMatchBoost).coerceIn(0f, 0.78f),
+                        source = CandidateSource.STATIC_DICTIONARY,
+                        contextMatchOrder = 0
+                    )
+                )
+            }
         }
 
         results.sort()

@@ -42,7 +42,7 @@ class GlideAccuracyTest {
         return map
     }
 
-    private fun loadWordlist(): TrieLexicon {
+    private fun loadWordlist(includeHinglish: Boolean = false): TrieLexicon {
         val lex = TrieLexicon()
         val candidates = listOf(
             File("src/main/assets/wordlist.txt"),
@@ -53,6 +53,17 @@ class GlideAccuracyTest {
             file.bufferedReader().useLines { lex.loadFromSequence(it) }
         } else {
             lex.loadDefaultVocabulary()
+        }
+        if (includeHinglish) {
+            val hFile = listOf(
+                File("src/main/assets/wordlist_hinglish.txt"),
+                File("app/src/main/assets/wordlist_hinglish.txt")
+            ).firstOrNull { it.exists() }
+            if (hFile != null) {
+                hFile.bufferedReader().useLines { lex.loadFromSequence(it) }
+            } else {
+                lex.loadHinglishDefaults()
+            }
         }
         return lex
     }
@@ -252,5 +263,59 @@ class GlideAccuracyTest {
             val top = decoder.decodeGesture(swipeKeys(keys)).firstOrNull()?.word
             assertEquals("Expected '$expected' for '$keys'", expected, top)
         }
+    }
+
+    @Test
+    fun testHinglishGlideSwipesPrefixAndAutoCorrect() {
+        val positions = buildQwertyPositions()
+        val lex = loadWordlist(includeHinglish = true)
+        val decoder = GlideDecoder(positions, lex, GlideEngineConfig())
+
+        fun swipe(word: String): List<TouchPoint> {
+            val dedup = SpatialModel.dedupConsecutiveChars(word)
+            val pts = mutableListOf<TouchPoint>()
+            var t = 1000L
+            val first = positions[dedup.first()]!!
+            pts.add(TouchPoint(first.centerX, first.centerY, t))
+            for (k in 0 until dedup.size - 1) {
+                val a = positions[dedup[k]]!!
+                val b = positions[dedup[k + 1]]!!
+                for (step in 1..6) {
+                    val f = step / 6f
+                    t += 22L
+                    pts.add(TouchPoint(a.centerX + f * (b.centerX - a.centerX), a.centerY + f * (b.centerY - a.centerY), t))
+                }
+            }
+            return pts
+        }
+
+        val hinglishWords = listOf(
+            "namaste", "shukriya", "bahut", "achha", "bilkul",
+            "samajh", "zindagi", "kahan", "bhai", "chalo",
+            "theek", "kaam", "dost", "matlab"
+        )
+        var hits = 0
+        val misses = mutableListOf<String>()
+        for (word in hinglishWords) {
+            val top = decoder.decodeGesture(swipe(word)).firstOrNull()?.word
+            if (top == word) hits++ else misses.add("$word -> $top")
+        }
+        assertTrue(
+            "Expected >= 85% top-1 accuracy on Hinglish swipes, got $hits/${hinglishWords.size} ($misses)",
+            hits * 100 >= hinglishWords.size * 85
+        )
+
+        val bhMatches = lex.searchPrefix("bh", 8).map { it.first }
+        assertTrue("Expected 'bhai' in prefix 'bh', got $bhMatches", bhMatches.contains("bhai"))
+
+        val kyMatches = lex.searchPrefix("ky", 5).map { it.first }
+        assertTrue("Expected 'kya' in prefix 'ky', got $kyMatches", kyMatches.contains("kya"))
+
+        assertEquals("the", lex.findBestCorrection("teh"))
+        assertEquals("receive", lex.findBestCorrection("recieve"))
+        assertEquals("bhai", lex.findBestCorrection("bhia"))
+
+        val kyaNext = TrieLexicon.getContextualFallbackPredictions("kya")
+        assertTrue("Expected 'hai' after 'kya', got $kyaNext", kyaNext.contains("hai"))
     }
 }

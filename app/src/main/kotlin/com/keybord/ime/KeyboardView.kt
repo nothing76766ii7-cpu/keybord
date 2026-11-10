@@ -14,8 +14,12 @@ import com.keybord.engine.glide.KeyPosition
 import com.keybord.theme.*
 
 /**
- * High-performance custom KeyboardView rendering dynamic layouts,
- * custom theme geometries, gradients, fonts, and touch hitboxes.
+ * High-performance custom KeyboardView supporting:
+ * - Dynamic theme geometry, optional number row, secondary symbol hints & one-handed mode
+ * - Multi-touch 2-thumb rollover for rapid typing
+ * - Long-press secondary symbols (numbers / punctuation)
+ * - Gboard-style Space-bar horizontal cursor scrubbing with live visual indicator
+ * - Delete key repeat-char -> repeat-word & leftward swipe-to-delete
  */
 class KeyboardView @JvmOverloads constructor(
     context: Context,
@@ -38,6 +42,7 @@ class KeyboardView @JvmOverloads constructor(
     var layer: KeyboardLayer = KeyboardLayer.ALPHA
         set(value) {
             field = value
+            requestLayout()
             recomputeKeyBounds()
             invalidate()
         }
@@ -52,9 +57,30 @@ class KeyboardView @JvmOverloads constructor(
         set(value) {
             field = value
             effectEngine.clear()
+            requestLayout()
             recomputeKeyBounds()
             invalidate()
         }
+
+    var showNumberRow: Boolean = false
+        set(value) {
+            if (field != value) {
+                field = value
+                requestLayout()
+                recomputeKeyBounds()
+                invalidate()
+            }
+        }
+
+    var showSecondarySymbols: Boolean = true
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
+    var vibrationDurationMs: Long = 14L
 
     var onKeyTap: ((String) -> Unit)? = null
     var onKeyLongPress: ((String) -> Unit)? = null
@@ -64,6 +90,7 @@ class KeyboardView @JvmOverloads constructor(
     var onDeleteSwipeStep: ((wordCount: Int) -> Int)? = null
     var onDeleteSwipeFinish: ((commitDelete: Boolean) -> Unit)? = null
     var onSpaceSwipeCursorStep: ((deltaSteps: Int) -> Unit)? = null
+    var onSpaceSwipeStateChanged: ((active: Boolean) -> Unit)? = null
     var onKeyPositionsChanged: ((Map<Char, KeyPosition>) -> Unit)? = null
 
     var popPreviewView: KeyPopPreviewView? = null
@@ -79,8 +106,8 @@ class KeyboardView @JvmOverloads constructor(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val secondaryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.RIGHT }
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val spaceCursorPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
-    // Key definition & Hitbox mapping
     data class KeyDef(
         val code: String,
         val secondaryCode: String? = null,
@@ -91,13 +118,28 @@ class KeyboardView @JvmOverloads constructor(
     private val keyPositions = HashMap<Char, KeyPosition>()
     private val activeKeys = mutableListOf<KeyDef>()
     private var pressedKey: KeyDef? = null
+    private var activePointerId: Int = MotionEvent.INVALID_POINTER_ID
 
     private var touchDownTime = 0L
     private var touchDownX = 0f
     private var touchDownY = 0f
     private var isSwipeGesture = false
 
-    // Delete key long-press & Gboard-style swipe-to-delete state
+    // Long-press secondary char state
+    private var longPressSecondaryKey: KeyDef? = null
+    private var longPressSecondaryTriggered = false
+    private val secondaryLongPressRunnable = Runnable {
+        val target = longPressSecondaryKey ?: return@Runnable
+        val sec = target.secondaryCode ?: return@Runnable
+        if (!isSwipeGesture && pressedKey == target) {
+            longPressSecondaryTriggered = true
+            triggerHapticFeedback(vibrationDurationMs.coerceAtMost(18L))
+            popPreviewView?.show(sec, target.bounds)
+            onKeyLongPress?.invoke(sec)
+        }
+    }
+
+    // Delete key long-press & swipe-to-delete state
     private var deleteKeyDown: KeyDef? = null
     private var hasPerformedRepeatDelete = false
     private var isDeleteSwipeActive = false
@@ -106,6 +148,7 @@ class KeyboardView @JvmOverloads constructor(
 
     // Space-bar cursor slide state
     private var spaceKeyDown: KeyDef? = null
+    private var isSpaceCursorActive = false
     private var spaceLastStepIndex = 0
 
     private val deleteRepeatRunnable = object : Runnable {
@@ -117,13 +160,18 @@ class KeyboardView @JvmOverloads constructor(
                 onDeleteRepeatChar?.invoke() ?: onKeyTap?.invoke("⌫")
                 DELETE_CHAR_INTERVAL_MS
             } else {
-                triggerHapticFeedback(10L)
+                triggerHapticFeedback(vibrationDurationMs.coerceAtMost(10L))
                 onDeleteWord?.invoke() ?: onDeleteRepeatChar?.invoke() ?: onKeyTap?.invoke("⌫")
                 DELETE_WORD_INTERVAL_MS
             }
             deleteHandler.postDelayed(this, nextIntervalMs)
         }
     }
+
+    private val numberRow = listOf(
+        KeyDef("1"), KeyDef("2"), KeyDef("3"), KeyDef("4"), KeyDef("5"),
+        KeyDef("6"), KeyDef("7"), KeyDef("8"), KeyDef("9"), KeyDef("0")
+    )
 
     private val alphaRows = listOf(
         listOf(
@@ -137,12 +185,12 @@ class KeyboardView @JvmOverloads constructor(
             KeyDef("l", ")")
         ),
         listOf(
-            KeyDef("⇧", widthWeight = 1.4f), KeyDef("z"), KeyDef("x"), KeyDef("c"),
-            KeyDef("v"), KeyDef("b"), KeyDef("n"), KeyDef("m"), KeyDef("⌫", widthWeight = 1.4f)
+            KeyDef("⇧", widthWeight = 1.4f), KeyDef("z", "*"), KeyDef("x", "\""), KeyDef("c", "'"),
+            KeyDef("v", ":"), KeyDef("b", ";"), KeyDef("n", "/"), KeyDef("m", "?"), KeyDef("⌫", widthWeight = 1.4f)
         ),
         listOf(
-            KeyDef("?123", widthWeight = 1.4f), KeyDef(",", widthWeight = 1.0f),
-            KeyDef(" ", widthWeight = 4.2f), KeyDef(".", widthWeight = 1.0f),
+            KeyDef("?123", widthWeight = 1.4f), KeyDef(",", "!"),
+            KeyDef(" ", widthWeight = 4.2f), KeyDef(".", "?"),
             KeyDef("Enter", widthWeight = 1.6f)
         )
     )
@@ -187,7 +235,11 @@ class KeyboardView @JvmOverloads constructor(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = resources.displayMetrics.density
-        val totalHeightDp = (theme.keyHeightDp * 4f) + (theme.keyGapVerticalDp * 5f) + theme.bottomPaddingDp
+        val hasNumRow = showNumberRow && layer == KeyboardLayer.ALPHA
+        val mainRowsHeight = theme.keyHeightDp * 4f
+        val numRowHeight = if (hasNumRow) theme.keyHeightDp * NUMBER_ROW_HEIGHT_RATIO else 0f
+        val gapCount = if (hasNumRow) 6f else 5f
+        val totalHeightDp = mainRowsHeight + numRowHeight + (theme.keyGapVerticalDp * gapCount) + theme.bottomPaddingDp
         val desiredHeightPx = (totalHeightDp * density).toInt()
         val widthPx = MeasureSpec.getSize(widthMeasureSpec)
         val heightPx = resolveSize(desiredHeightPx, heightMeasureSpec)
@@ -199,9 +251,6 @@ class KeyboardView @JvmOverloads constructor(
         recomputeKeyBounds()
     }
 
-    /**
-     * Calculates precise key hitboxes according to active geometry, gaps, and one-handed mode.
-     */
     fun recomputeKeyBounds() {
         val w = width
         val h = height
@@ -209,7 +258,7 @@ class KeyboardView @JvmOverloads constructor(
 
         val density = resources.displayMetrics.density
         val rows = when (layer) {
-            KeyboardLayer.ALPHA -> alphaRows
+            KeyboardLayer.ALPHA -> if (showNumberRow) listOf(numberRow) + alphaRows else alphaRows
             KeyboardLayer.SYMBOLS -> symbolsRows
             KeyboardLayer.EXTENDED_SYMBOLS -> extendedSymbolsRows
         }
@@ -217,7 +266,6 @@ class KeyboardView @JvmOverloads constructor(
         activeKeys.clear()
         keyPositions.clear()
 
-        // One-handed mode calculation
         var keyboardWidth = w.toFloat()
         var keyboardOffsetLeft = 0f
         if (theme.oneHandedMode.enabled) {
@@ -229,10 +277,12 @@ class KeyboardView @JvmOverloads constructor(
 
         val gapH = theme.keyGapHorizontalDp * density
         val gapV = theme.keyGapVerticalDp * density
-        val keyHeight = theme.keyHeightDp * density
+        val baseKeyHeight = theme.keyHeightDp * density
         var currentY = gapV
 
-        for (row in rows) {
+        for ((rowIdx, row) in rows.withIndex()) {
+            val isNumRow = showNumberRow && layer == KeyboardLayer.ALPHA && rowIdx == 0
+            val rowKeyHeight = if (isNumRow) baseKeyHeight * NUMBER_ROW_HEIGHT_RATIO else baseKeyHeight
             val totalWeights = row.sumOf { it.widthWeight.toDouble() }.toFloat()
             val totalGaps = (row.size + 1) * gapH
             val availWidth = keyboardWidth - totalGaps
@@ -240,11 +290,10 @@ class KeyboardView @JvmOverloads constructor(
 
             for (key in row) {
                 val keyWidth = (key.widthWeight / totalWeights) * (availWidth + (row.size - totalWeights) * gapH)
-                val bounds = RectF(currentX, currentY, currentX + keyWidth, currentY + keyHeight)
+                val bounds = RectF(currentX, currentY, currentX + keyWidth, currentY + rowKeyHeight)
                 key.bounds = bounds
                 activeKeys.add(key)
 
-                // If alphabetic, register with KeyPosition for GlideDecoder
                 if (key.code.length == 1 && key.code[0].isLetter()) {
                     val char = key.code[0].lowercaseChar()
                     keyPositions[char] = KeyPosition(char, bounds)
@@ -252,7 +301,7 @@ class KeyboardView @JvmOverloads constructor(
 
                 currentX += keyWidth + gapH
             }
-            currentY += keyHeight + gapV
+            currentY += rowKeyHeight + gapV
         }
 
         val strokePx = kotlin.math.max(1f, theme.keyBorderWidthDp) * density
@@ -266,7 +315,9 @@ class KeyboardView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        cancelLongPressSecondary()
         resetDeleteGesture(commitSwipe = false)
+        resetSpaceGesture()
         effectEngine.clear()
     }
 
@@ -281,12 +332,28 @@ class KeyboardView @JvmOverloads constructor(
 
     fun cancelActiveTouch() {
         popPreviewView?.dismiss()
+        cancelLongPressSecondary()
         resetDeleteGesture(commitSwipe = false)
-        spaceKeyDown = null
-        spaceLastStepIndex = 0
+        resetSpaceGesture()
+        activePointerId = MotionEvent.INVALID_POINTER_ID
         pressedKey = null
         isSwipeGesture = false
         invalidate()
+    }
+
+    private fun cancelLongPressSecondary() {
+        deleteHandler.removeCallbacks(secondaryLongPressRunnable)
+        longPressSecondaryKey = null
+        longPressSecondaryTriggered = false
+    }
+
+    private fun resetSpaceGesture() {
+        if (isSpaceCursorActive) {
+            isSpaceCursorActive = false
+            onSpaceSwipeStateChanged?.invoke(false)
+        }
+        spaceKeyDown = null
+        spaceLastStepIndex = 0
     }
 
     private fun resetDeleteGesture(commitSwipe: Boolean) {
@@ -309,7 +376,7 @@ class KeyboardView @JvmOverloads constructor(
         super.onDraw(canvas)
         val density = resources.displayMetrics.density
 
-        // 1. Draw Keyboard Surface Background
+        // 1. Keyboard Surface Background
         when (theme.keyboardBackground.type) {
             BackgroundSpec.Type.SOLID -> {
                 bgPaint.shader = null
@@ -342,14 +409,16 @@ class KeyboardView @JvmOverloads constructor(
         textPaint.typeface = theme.keyLabelFont.toTypeface()
 
         secondaryTextPaint.color = theme.keyLabelColorSecondary
-        secondaryTextPaint.textSize = theme.keyLabelSizeSp * density * 0.65f
+        secondaryTextPaint.textSize = (theme.keyLabelSizeSp * density * 0.62f).coerceAtLeast(9f * density)
         secondaryTextPaint.typeface = theme.keyLabelFont.toTypeface()
 
         highlightPaint.color = theme.keyPressHighlightColor
+        val accentTint = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
 
         for (key in activeKeys) {
             val rect = key.bounds
             val isEnter = key.code == "Enter"
+            val isSpace = key.code == " "
             val isFunc = isFunctionalKey(key)
 
             if (theme.effectStyle == EffectStyle.CYBER_NEON && theme.keyBorderWidthDp > 0f) {
@@ -358,7 +427,6 @@ class KeyboardView @JvmOverloads constructor(
                 )
             }
 
-            // Key Face Fill (respecting accent Enter key and functional key roles)
             val overrideColor = when {
                 isEnter -> theme.accentKeyColor
                 isFunc -> theme.functionalKeyColor
@@ -381,29 +449,43 @@ class KeyboardView @JvmOverloads constructor(
 
             canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
 
-            // Key Border
+            if (isSpace && isSpaceCursorActive) {
+                spaceCursorPaint.color = Color.argb(
+                    64,
+                    Color.red(accentTint),
+                    Color.green(accentTint),
+                    Color.blue(accentTint)
+                )
+                canvas.drawRoundRect(rect, cornerRadius, cornerRadius, spaceCursorPaint)
+            }
+
             if (theme.keyBorderWidthDp > 0f) {
                 canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
             }
 
-            // Key Press Highlight
             if (key == pressedKey) {
                 canvas.drawRoundRect(rect, cornerRadius, cornerRadius, highlightPaint)
             }
 
-            // Key Text Label
-            textPaint.color = if (isEnter && theme.accentKeyColor != null) {
-                theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
-            } else {
-                theme.keyLabelColorPrimary
+            textPaint.color = when {
+                isSpace && isSpaceCursorActive -> accentTint
+                isEnter && theme.accentKeyColor != null -> theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
+                else -> theme.keyLabelColorPrimary
             }
-            val displayText = getDisplayText(key)
+
+            val displayText = if (isSpace && isSpaceCursorActive) "◀   Cursor   ▶" else getDisplayText(key)
+            val savedSize = textPaint.textSize
+            if (isSpace && isSpaceCursorActive) {
+                textPaint.textSize = (theme.keyLabelSizeSp * density * 0.82f)
+            } else if (key.code.length > 2) {
+                textPaint.textSize = (theme.keyLabelSizeSp * density * 0.82f)
+            }
             val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
             canvas.drawText(displayText, rect.centerX(), textY, textPaint)
+            textPaint.textSize = savedSize
 
-            // Secondary Label (if present)
-            if (key.secondaryCode != null && layer == KeyboardLayer.ALPHA) {
-                val secX = rect.right - (4f * density)
+            if (showSecondarySymbols && key.secondaryCode != null && layer == KeyboardLayer.ALPHA) {
+                val secX = rect.right - (4.5f * density)
                 val secY = rect.top + (12f * density)
                 canvas.drawText(key.secondaryCode, secX, secY, secondaryTextPaint)
             }
@@ -432,13 +514,13 @@ class KeyboardView @JvmOverloads constructor(
             key.code.length == 1 && key.code[0].isLetter() -> {
                 if (shiftState != ShiftState.OFF) key.code.uppercase() else key.code.lowercase()
             }
+            key.code == " " -> "Keybord"
             else -> key.code
         }
     }
 
     private fun findKeyAt(x: Float, y: Float): KeyDef? {
         activeKeys.find { it.bounds.contains(x, y) }?.let { return it }
-        // Eliminate inter-key gap dead zones (5dp tolerance) by selecting nearest key center
         val tolPx = 5f * resources.displayMetrics.density
         var bestKey: KeyDef? = null
         var bestDistSq = Float.MAX_VALUE
@@ -458,48 +540,54 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     fun handleTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x
-        val y = event.y
         val density = resources.displayMetrics.density
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                resetDeleteGesture(commitSwipe = false)
-                spaceKeyDown = null
-                spaceLastStepIndex = 0
-                touchDownTime = System.currentTimeMillis()
-                touchDownX = x
-                touchDownY = y
-                isSwipeGesture = false
+                activePointerId = event.getPointerId(0)
+                val x = event.x
+                val y = event.y
+                startPointerKeyDown(x, y)
+                return true
+            }
 
-                pressedKey = findKeyAt(x, y)
-                pressedKey?.let { key ->
-                    triggerHapticFeedback()
-                    popPreviewView?.show(getDisplayText(key), key.bounds)
-                    effectEngine.triggerKeyPress(
-                        key.bounds.centerX(),
-                        key.bounds.centerY(),
-                        key.bounds,
-                        theme,
-                        width.toFloat()
-                    )
-                    when (key.code) {
-                        "⌫" -> {
-                            deleteKeyDown = key
-                            deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
-                        }
-                        " " -> {
-                            spaceKeyDown = key
-                            spaceLastStepIndex = 0
-                        }
-                        else -> Unit
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // Multi-touch 2-thumb rollover for rapid typing
+                val prevKey = pressedKey
+                if (prevKey != null &&
+                    !isSwipeGesture &&
+                    !isDeleteSwipeActive &&
+                    !isSpaceCursorActive &&
+                    deleteKeyDown == null &&
+                    spaceKeyDown == null &&
+                    !isFunctionalKey(prevKey)
+                ) {
+                    val commitChar = if (longPressSecondaryTriggered && prevKey.secondaryCode != null) {
+                        prevKey.secondaryCode
+                    } else {
+                        getDisplayText(prevKey)
                     }
+                    cancelLongPressSecondary()
+                    popPreviewView?.dismiss()
+                    onKeyTap?.invoke(commitChar)
                 }
-                invalidate()
+
+                val newIndex = event.actionIndex
+                activePointerId = event.getPointerId(newIndex)
+                startPointerKeyDown(event.getX(newIndex), event.getY(newIndex))
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
+                val ptrIdx = if (activePointerId != MotionEvent.INVALID_POINTER_ID) {
+                    event.findPointerIndex(activePointerId)
+                } else {
+                    0
+                }
+                if (ptrIdx < 0) return true
+                val x = event.getX(ptrIdx)
+                val y = event.getY(ptrIdx)
+
                 val activeDeleteKey = deleteKeyDown
                 if (activeDeleteKey != null) {
                     handleDeleteMove(activeDeleteKey, x, y, density)
@@ -509,16 +597,21 @@ class KeyboardView @JvmOverloads constructor(
                 if (spaceKeyDown != null) {
                     val dx = x - touchDownX
                     val dy = Math.abs(y - touchDownY)
-                    val swipeStartPx = 16f * density
-                    val stepPx = 14f * density
-                    if (isSwipeGesture || (Math.abs(dx) > swipeStartPx && Math.abs(dx) >= dy)) {
-                        isSwipeGesture = true
-                        popPreviewView?.dismiss()
+                    val swipeStartPx = SPACE_SWIPE_START_SLOP_DP * density
+                    val stepPx = SPACE_SWIPE_STEP_DP * density
+                    if (isSpaceCursorActive || (Math.abs(dx) >= swipeStartPx && Math.abs(dx) >= dy)) {
+                        if (!isSpaceCursorActive) {
+                            isSpaceCursorActive = true
+                            isSwipeGesture = true
+                            popPreviewView?.dismiss()
+                            onSpaceSwipeStateChanged?.invoke(true)
+                            invalidate()
+                        }
                         val stepIndex = (dx / stepPx).toInt()
                         val delta = stepIndex - spaceLastStepIndex
                         if (delta != 0) {
                             spaceLastStepIndex = stepIndex
-                            triggerHapticFeedback(8L)
+                            triggerHapticFeedback(vibrationDurationMs.coerceAtMost(7L))
                             onSpaceSwipeCursorStep?.invoke(delta)
                         }
                         return true
@@ -529,10 +622,12 @@ class KeyboardView @JvmOverloads constructor(
                 val dist = Math.hypot((x - touchDownX).toDouble(), (y - touchDownY).toDouble()).toFloat()
                 if (dist > touchSlopPx) {
                     isSwipeGesture = true
+                    cancelLongPressSecondary()
                     popPreviewView?.dismiss()
                 }
                 val currentKey = findKeyAt(x, y)
                 if (currentKey != pressedKey) {
+                    cancelLongPressSecondary()
                     pressedKey = currentKey
                     if (pressedKey != null && !isSwipeGesture) {
                         popPreviewView?.show(getDisplayText(pressedKey!!), pressedKey!!.bounds)
@@ -544,50 +639,111 @@ class KeyboardView @JvmOverloads constructor(
                 return true
             }
 
+            MotionEvent.ACTION_POINTER_UP -> {
+                val upIndex = event.actionIndex
+                val upId = event.getPointerId(upIndex)
+                if (upId == activePointerId) {
+                    finishPointerKeyUp(event.getX(upIndex), event.getY(upIndex))
+                    val nextIndex = if (upIndex == 0) 1 else 0
+                    activePointerId = if (nextIndex < event.pointerCount) event.getPointerId(nextIndex) else MotionEvent.INVALID_POINTER_ID
+                }
+                return true
+            }
+
             MotionEvent.ACTION_UP -> {
-                popPreviewView?.dismiss()
-                val activeDeleteKey = deleteKeyDown
-                if (activeDeleteKey != null) {
-                    val shouldFireSingleTap = !isDeleteSwipeActive && !hasPerformedRepeatDelete && !isSwipeGesture
-                    resetDeleteGesture(commitSwipe = true)
-                    spaceKeyDown = null
-                    spaceLastStepIndex = 0
-                    pressedKey = null
-                    isSwipeGesture = false
-                    invalidate()
-                    if (shouldFireSingleTap) {
-                        onKeyTap?.invoke("⌫")
-                    }
-                    return true
+                val ptrIdx = if (activePointerId != MotionEvent.INVALID_POINTER_ID) {
+                    event.findPointerIndex(activePointerId).coerceAtLeast(0)
+                } else {
+                    0
                 }
-
-                val targetKey = pressedKey ?: findKeyAt(x, y) ?: findKeyAt(touchDownX, touchDownY)
-                val wasSwipe = isSwipeGesture
-                spaceKeyDown = null
-                spaceLastStepIndex = 0
-                pressedKey = null
-                isSwipeGesture = false
-                invalidate()
-
-                if (!wasSwipe && targetKey != null) {
-                    val keyText = getDisplayText(targetKey)
-                    onKeyTap?.invoke(keyText)
-                }
+                val x = if (ptrIdx < event.pointerCount) event.getX(ptrIdx) else event.x
+                val y = if (ptrIdx < event.pointerCount) event.getY(ptrIdx) else event.y
+                finishPointerKeyUp(x, y)
+                activePointerId = MotionEvent.INVALID_POINTER_ID
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
-                popPreviewView?.dismiss()
-                resetDeleteGesture(commitSwipe = false)
-                spaceKeyDown = null
-                spaceLastStepIndex = 0
-                pressedKey = null
-                isSwipeGesture = false
-                invalidate()
+                cancelActiveTouch()
                 return true
             }
         }
         return false
+    }
+
+    private fun startPointerKeyDown(x: Float, y: Float) {
+        cancelLongPressSecondary()
+        resetDeleteGesture(commitSwipe = false)
+        resetSpaceGesture()
+        touchDownTime = System.currentTimeMillis()
+        touchDownX = x
+        touchDownY = y
+        isSwipeGesture = false
+
+        pressedKey = findKeyAt(x, y)
+        pressedKey?.let { key ->
+            triggerHapticFeedback(vibrationDurationMs)
+            popPreviewView?.show(getDisplayText(key), key.bounds)
+            effectEngine.triggerKeyPress(
+                key.bounds.centerX(),
+                key.bounds.centerY(),
+                key.bounds,
+                theme,
+                width.toFloat()
+            )
+            when (key.code) {
+                "⌫" -> {
+                    deleteKeyDown = key
+                    deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
+                }
+                " " -> {
+                    spaceKeyDown = key
+                    spaceLastStepIndex = 0
+                }
+                else -> {
+                    if (key.secondaryCode != null && layer == KeyboardLayer.ALPHA) {
+                        longPressSecondaryKey = key
+                        longPressSecondaryTriggered = false
+                        deleteHandler.postDelayed(secondaryLongPressRunnable, LONG_PRESS_SECONDARY_DELAY_MS)
+                    }
+                }
+            }
+        }
+        invalidate()
+    }
+
+    private fun finishPointerKeyUp(x: Float, y: Float) {
+        popPreviewView?.dismiss()
+        val activeDeleteKey = deleteKeyDown
+        if (activeDeleteKey != null) {
+            val shouldFireSingleTap = !isDeleteSwipeActive && !hasPerformedRepeatDelete && !isSwipeGesture
+            resetDeleteGesture(commitSwipe = true)
+            resetSpaceGesture()
+            cancelLongPressSecondary()
+            pressedKey = null
+            isSwipeGesture = false
+            invalidate()
+            if (shouldFireSingleTap) {
+                onKeyTap?.invoke("⌫")
+            }
+            return
+        }
+
+        val targetKey = pressedKey ?: findKeyAt(x, y) ?: findKeyAt(touchDownX, touchDownY)
+        val wasSwipe = isSwipeGesture || isSpaceCursorActive
+        val secTriggered = longPressSecondaryTriggered
+        val secValue = longPressSecondaryKey?.secondaryCode
+
+        cancelLongPressSecondary()
+        resetSpaceGesture()
+        pressedKey = null
+        isSwipeGesture = false
+        invalidate()
+
+        if (!wasSwipe && targetKey != null) {
+            val keyText = if (secTriggered && secValue != null) secValue else getDisplayText(targetKey)
+            onKeyTap?.invoke(keyText)
+        }
     }
 
     private fun handleDeleteMove(activeDeleteKey: KeyDef, x: Float, y: Float, density: Float) {
@@ -626,13 +782,14 @@ class KeyboardView @JvmOverloads constructor(
         val actualWords = onDeleteSwipeStep?.invoke(requestedWords) ?: requestedWords
         if (actualWords != activeDeleteSwipeCount) {
             activeDeleteSwipeCount = actualWords
-            triggerHapticFeedback(10L)
+            triggerHapticFeedback(vibrationDurationMs.coerceAtMost(10L))
         }
         val label = if (actualWords == 0) "Keep" else "−$actualWords w"
         popPreviewView?.show(label, activeDeleteKey.bounds)
     }
 
-    private fun triggerHapticFeedback(durationMs: Long = 15L) {
+    private fun triggerHapticFeedback(durationMs: Long = vibrationDurationMs) {
+        if (durationMs <= 0L) return
         if (vibrator != null && vibrator.hasVibrator()) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -641,13 +798,15 @@ class KeyboardView @JvmOverloads constructor(
                     @Suppress("DEPRECATION")
                     vibrator.vibrate(durationMs)
                 }
-            } catch (e: Exception) {
+            } catch (_: Exception) {
                 // Permission or system vibrator error
             }
         }
     }
 
     companion object {
+        private const val NUMBER_ROW_HEIGHT_RATIO = 0.82f
+        private const val LONG_PRESS_SECONDARY_DELAY_MS = 360L
         private const val DELETE_REPEAT_INITIAL_DELAY_MS = 380L
         private const val DELETE_CHAR_INTERVAL_MS = 55L
         private const val DELETE_WORD_INTERVAL_MS = 150L
@@ -655,5 +814,7 @@ class KeyboardView @JvmOverloads constructor(
         private const val DELETE_SWIPE_START_SLOP_DP = 18f
         private const val DELETE_SWIPE_WORD_STEP_DP = 28f
         private const val DELETE_REPEAT_CANCEL_DRIFT_DP = 26f
+        private const val SPACE_SWIPE_START_SLOP_DP = 10f
+        private const val SPACE_SWIPE_STEP_DP = 10f
     }
 }

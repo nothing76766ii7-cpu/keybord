@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.Gravity
@@ -34,6 +35,7 @@ import com.keybord.engine.vocab.*
 import com.keybord.profile.AppProfileRepository
 import com.keybord.settings.KeybordSettingsActivity
 import com.keybord.theme.BuiltInThemes
+import com.keybord.theme.KeyboardLayoutPrefs
 import com.keybord.theme.ThemeModel
 import com.keybord.theme.ThemeRepository
 import com.keybord.voice.MicPermissionActivity
@@ -42,8 +44,8 @@ import com.keybord.voice.VoiceRamblerManager
 /**
  * Master InputMethodService for Keybord.
  * Unifies Unlimited Clipboard, Visual Customization, SHARK2 Glide Typing,
- * Adaptive Vocabulary + Personal Dictionary Sync, Voice Rambler Dictation,
- * and Magic Writer Proofread & Tone Rewriting.
+ * Adaptive Vocabulary + Personal Dictionary Sync, Hinglish Bilingual Support,
+ * Emoji Panel, Voice Rambler Dictation, and Magic Writer Proofread & Tone Rewriting.
  */
 class KeybordIME : InputMethodService() {
 
@@ -54,6 +56,7 @@ class KeybordIME : InputMethodService() {
     private lateinit var clipboardManager: KeybordClipboardManager
     private lateinit var themeRepo: ThemeRepository
     private lateinit var profileRepo: AppProfileRepository
+    private lateinit var layoutPrefs: KeyboardLayoutPrefs
     private val magicCoordinator = MagicWritingCoordinator()
     private lateinit var ramblerController: RamblerController
     private lateinit var voiceRamblerManager: VoiceRamblerManager
@@ -65,9 +68,11 @@ class KeybordIME : InputMethodService() {
     private lateinit var keyboardView: KeyboardView
     private lateinit var gestureOverlayView: GestureOverlayView
     private lateinit var popPreviewView: KeyPopPreviewView
+    private lateinit var emojiPanelView: EmojiPanelView
     private lateinit var inlineClipboardTray: InlineClipboardTrayView
 
     // State & Prefs
+    private var baseTheme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
     private var activeTheme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
     private val touchPoints = mutableListOf<TouchPoint>()
     private val recentContextWords = mutableListOf<String>()
@@ -77,15 +82,23 @@ class KeybordIME : InputMethodService() {
     private var isAutoCorrectEnabled = true
     private var isAutoCapitaliseEnabled = true
     private var isDoubleSpacePeriodEnabled = true
+    private var isHinglishEnabled = true
     private var currentEditorInfo: EditorInfo? = null
 
-    // Track for manual correction, smart punctuation spacing, and glide alternatives
+    // Track for manual correction, auto-correct undo, smart punctuation spacing, and glide alternatives
     private var lastCommittedWord: String? = null
     private var wasLastCommittedFromSuggestion = false
     private var lastGlideCommittedWord: String? = null
     private var autoInsertedSpaceBeforePunctuation = false
+    private var lastAutoCorrectedOriginal: String? = null
+    private var lastAutoCorrectedReplacement: String? = null
+    private var suppressedAutoCorrectWord: String? = null
     private var isSwipeSession = false
     private var pendingMicAfterPermission = false
+
+    private val layoutPrefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, _ ->
+        applyTheme(baseTheme)
+    }
 
     // Swipe-to-delete state
     private var swipeUseSelectionHighlight = false
@@ -113,11 +126,14 @@ class KeybordIME : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         configureImeWindow()
+        layoutPrefs = KeyboardLayoutPrefs(this)
+        getSharedPreferences(KeyboardLayoutPrefs.PREFS_NAME, MODE_PRIVATE)
+            .registerOnSharedPreferenceChangeListener(layoutPrefsListener)
         loadTypingPreferences()
 
-        // 1. Initialize Lexicon (assets/wordlist.txt + starter fallback) & SHARK2 Glide Engine
+        // 1. Initialize Lexicon (assets/wordlist.txt + Hinglish) & SHARK2 Glide Engine
         lexicon = TrieLexicon().apply {
-            loadFromAssets(this@KeybordIME)
+            loadFromAssets(this@KeybordIME, includeHinglish = isHinglishEnabled)
         }
         glideDecoder = GlideDecoder(emptyMap(), lexicon)
 
@@ -125,7 +141,9 @@ class KeybordIME : InputMethodService() {
         vocabEngine = AdaptiveVocabularyEngine(
             context = this,
             staticWordLookup = { word -> lexicon.contains(word) }
-        )
+        ).apply {
+            staticLexicon = lexicon
+        }
         syncUserVocabularyIntoLexicon()
 
         // 3. Initialize Voice Rambler Controller & SpeechRecognizer Manager
@@ -212,22 +230,31 @@ class KeybordIME : InputMethodService() {
                 applyTheme(newTheme)
             }
         }
-        activeTheme = themeRepo.getActiveTheme()
+        baseTheme = themeRepo.getActiveTheme()
+        activeTheme = layoutPrefs.applyTo(baseTheme)
         profileRepo = AppProfileRepository(this)
     }
 
     private fun loadTypingPreferences() {
+        val prevHinglish = isHinglishEnabled
         try {
             val prefs = getSharedPreferences("keybord_typing_prefs", MODE_PRIVATE)
             isGlideTypingEnabled = prefs.getBoolean("glide_typing", true)
             isAutoCorrectEnabled = prefs.getBoolean("auto_correct", true)
             isAutoCapitaliseEnabled = prefs.getBoolean("auto_capitalise", true)
             isDoubleSpacePeriodEnabled = prefs.getBoolean("double_space_period", true)
+            isHinglishEnabled = prefs.getBoolean("hinglish_typing", true)
         } catch (_: Exception) {
             isGlideTypingEnabled = true
             isAutoCorrectEnabled = true
             isAutoCapitaliseEnabled = true
             isDoubleSpacePeriodEnabled = true
+            isHinglishEnabled = true
+        }
+        if (::lexicon.isInitialized && prevHinglish != isHinglishEnabled) {
+            lexicon.clear()
+            lexicon.loadFromAssets(this, includeHinglish = isHinglishEnabled)
+            syncUserVocabularyIntoLexicon()
         }
     }
 
@@ -277,6 +304,12 @@ class KeybordIME : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        try {
+            getSharedPreferences(KeyboardLayoutPrefs.PREFS_NAME, MODE_PRIVATE)
+                .unregisterOnSharedPreferenceChangeListener(layoutPrefsListener)
+        } catch (_: Exception) {
+            // Safe ignore
+        }
         if (isMicReceiverRegistered) {
             try {
                 unregisterReceiver(micPermissionReceiver)
@@ -301,7 +334,7 @@ class KeybordIME : InputMethodService() {
             )
         }
 
-        // 1. Enhanced Suggestion Strip (Clipboard, Magic Writer ✨, Candidates, Mic 🎙, Settings)
+        // 1. Enhanced Suggestion Strip (Clipboard, Emoji 😊, Magic ✨, Candidates, Mic 🎙, Settings)
         suggestionStripView = SuggestionStripView(this).apply {
             theme = activeTheme
             onCandidateSelected = { word ->
@@ -313,6 +346,9 @@ class KeybordIME : InputMethodService() {
             }
             onClipboardIconClicked = {
                 toggleInlineClipboardTray()
+            }
+            onEmojiIconClicked = {
+                toggleEmojiPanel()
             }
             onSettingsIconClicked = {
                 launchSettings()
@@ -357,6 +393,9 @@ class KeybordIME : InputMethodService() {
 
         keyboardView = KeyboardView(this).apply {
             theme = activeTheme
+            showNumberRow = layoutPrefs.showNumberRow
+            showSecondarySymbols = layoutPrefs.showSecondarySymbols
+            vibrationDurationMs = layoutPrefs.vibrationDurationMs
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -383,6 +422,9 @@ class KeybordIME : InputMethodService() {
             onSpaceSwipeCursorStep = { deltaSteps ->
                 moveCursorBySteps(deltaSteps)
             }
+            onSpaceSwipeStateChanged = { active ->
+                handleSpaceSwipeStateChanged(active)
+            }
             onKeyPositionsChanged = { positions ->
                 glideDecoder.updateKeyPositions(positions)
             }
@@ -408,9 +450,34 @@ class KeybordIME : InputMethodService() {
         }
         keyboardView.popPreviewView = popPreviewView
         keyboardFrame.addView(popPreviewView)
+        rootContainer.addView(keyboardFrame)
 
-        // 3. Inline Clipboard Tray (initially hidden)
+        // 3. Emoji Section Panel (initially hidden)
+        emojiPanelView = EmojiPanelView(this).apply {
+            theme = activeTheme
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            onEmojiSelected = { emoji ->
+                currentInputConnection?.commitText(emoji, 1)
+                lastAutoCorrectedOriginal = null
+                lastAutoCorrectedReplacement = null
+                lastGlideCommittedWord = null
+            }
+            onBackspaceClicked = {
+                deleteSingleCharOrSelection()
+            }
+            onBackToKeyboardClicked = {
+                showKeyboardMain()
+            }
+        }
+        rootContainer.addView(emojiPanelView)
+
+        // 4. Inline Clipboard Tray (initially hidden)
         inlineClipboardTray = InlineClipboardTrayView(this).apply {
+            theme = activeTheme
             visibility = View.GONE
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -419,12 +486,12 @@ class KeybordIME : InputMethodService() {
         }
         rootContainer.addView(inlineClipboardTray)
 
-        // Intercept Touch for Glide Typing
+        // Intercept Touch for Glide Typing & Multi-Touch Rollover
         keyboardFrame.setOnTouchListener { _, event ->
             handleKeyboardTouch(event)
         }
 
-        applyTheme(activeTheme)
+        applyTheme(baseTheme)
         configureImeWindow()
         return rootContainer
     }
@@ -444,6 +511,7 @@ class KeybordIME : InputMethodService() {
             }
         }
         configureImeWindow()
+        showKeyboardMain()
         keyboardView.cancelActiveTouch()
         swipeUseSelectionHighlight = false
         swipeWordBoundaries = IntArray(0)
@@ -453,6 +521,9 @@ class KeybordIME : InputMethodService() {
         recentContextWords.clear()
         lastGlideCommittedWord = null
         autoInsertedSpaceBeforePunctuation = false
+        lastAutoCorrectedOriginal = null
+        lastAutoCorrectedReplacement = null
+        suppressedAutoCorrectWord = null
         isSwipeSession = false
         touchPoints.clear()
 
@@ -542,6 +613,14 @@ class KeybordIME : InputMethodService() {
                 return true
             }
 
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // Multi-touch 2-thumb rapid typing immediately yields from glide tracking to rollover tap
+                touchPoints.clear()
+                isSwipeSession = false
+                gestureOverlayView.clearTrail()
+                return keyboardView.handleTouchEvent(event)
+            }
+
             MotionEvent.ACTION_MOVE -> {
                 if (isSwipeSession) {
                     touchPoints.add(TouchPoint(x, y, now, event.pressure))
@@ -549,6 +628,10 @@ class KeybordIME : InputMethodService() {
                 }
                 keyboardView.handleTouchEvent(event)
                 return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                return keyboardView.handleTouchEvent(event)
             }
 
             MotionEvent.ACTION_UP -> {
@@ -655,7 +738,7 @@ class KeybordIME : InputMethodService() {
         ic.commitText("$leadingSpace$committedWord ", 1)
         ic.endBatchEdit()
 
-        vocabEngine.onWordCommitted(committedWord, recentContextWords, LearningEvent.NORMAL_TYPING)
+        learnAndSyncWord(committedWord, LearningEvent.NORMAL_TYPING)
         addContextWord(committedWord)
         currentWordPrefix.clear()
 
@@ -663,6 +746,9 @@ class KeybordIME : InputMethodService() {
         lastGlideCommittedWord = committedWord
         autoInsertedSpaceBeforePunctuation = true
         wasLastCommittedFromSuggestion = false
+        lastAutoCorrectedOriginal = null
+        lastAutoCorrectedReplacement = null
+        suppressedAutoCorrectWord = null
         lastSpaceTapTime = 0L
 
         val alternatives = if (candidates.size > 1) {
@@ -674,6 +760,17 @@ class KeybordIME : InputMethodService() {
         updateAutoCapShiftState()
     }
 
+    private fun resolveAutoCorrection(rawPrefix: String): String? {
+        if (!isAutoCorrectEnabled || rawPrefix.isEmpty()) return null
+        if (rawPrefix == "i") return "I"
+        if (rawPrefix.length < 2) return null
+        val lower = rawPrefix.lowercase()
+        if (lower == suppressedAutoCorrectWord) return null
+        if (vocabEngine.personalDictionary.contains(lower)) return null
+        if (vocabEngine.storage.searchPrefix(lower, 5).any { it.word == lower }) return null
+        return lexicon.findBestCorrection(rawPrefix)
+    }
+
     private fun handleKeyTap(key: String) {
         val ic = currentInputConnection ?: return
         val prevGlideWord = lastGlideCommittedWord
@@ -682,6 +779,10 @@ class KeybordIME : InputMethodService() {
         autoInsertedSpaceBeforePunctuation = false
         if (key != " ") {
             lastSpaceTapTime = 0L
+        }
+        if (key != "⌫") {
+            lastAutoCorrectedOriginal = null
+            lastAutoCorrectedReplacement = null
         }
 
         when (key) {
@@ -718,24 +819,34 @@ class KeybordIME : InputMethodService() {
                         ic.deleteSurroundingText(rawPrefix.length, 0)
                         ic.commitText("$expandedShortcut ", 1)
                         ic.endBatchEdit()
-                        vocabEngine.onWordCommitted(expandedShortcut, recentContextWords, LearningEvent.NORMAL_TYPING)
+                        learnAndSyncWord(expandedShortcut, LearningEvent.NORMAL_TYPING)
                         addContextWord(expandedShortcut)
                         currentWordPrefix.clear()
+                        suppressedAutoCorrectWord = null
                         lastSpaceTapTime = now
                         updateAutoCapShiftState()
                         refreshPredictions()
                         return
-                    } else if (isAutoCorrectEnabled && rawPrefix == "i") {
+                    }
+
+                    val correction = resolveAutoCorrection(rawPrefix)
+                    if (correction != null && correction != rawPrefix) {
+                        val replacement = "$correction "
                         ic.beginBatchEdit()
-                        ic.deleteSurroundingText(1, 0)
-                        ic.commitText("I ", 1)
+                        ic.deleteSurroundingText(rawPrefix.length, 0)
+                        ic.commitText(replacement, 1)
                         ic.endBatchEdit()
-                        vocabEngine.onWordCommitted("I", recentContextWords, LearningEvent.NORMAL_TYPING)
-                        addContextWord("I")
+                        lastAutoCorrectedOriginal = rawPrefix
+                        lastAutoCorrectedReplacement = replacement
+                        suppressedAutoCorrectWord = null
+                        learnAndSyncWord(correction, LearningEvent.NORMAL_TYPING)
+                        addContextWord(correction)
                         currentWordPrefix.clear()
                         lastSpaceTapTime = now
                         updateAutoCapShiftState()
-                        refreshPredictions()
+                        val nextPreds = vocabEngine.predictNextWords(recentContextWords, maxCandidates = 2)
+                            .map { it.word }
+                        suggestionStripView.setCandidates((listOf(rawPrefix) + nextPreds).distinct().take(3))
                         return
                     }
                 }
@@ -756,9 +867,10 @@ class KeybordIME : InputMethodService() {
                     lastSpaceTapTime = now
                 }
 
+                suppressedAutoCorrectWord = null
                 if (currentWordPrefix.isNotEmpty()) {
                     val committed = currentWordPrefix.toString()
-                    vocabEngine.onWordCommitted(committed, recentContextWords, LearningEvent.NORMAL_TYPING)
+                    learnAndSyncWord(committed, LearningEvent.NORMAL_TYPING)
                     addContextWord(committed)
                     currentWordPrefix.clear()
                 }
@@ -768,29 +880,40 @@ class KeybordIME : InputMethodService() {
             }
 
             "Enter" -> {
-                if (isAutoCorrectEnabled && currentWordPrefix.toString() == "i") {
+                val rawPrefix = currentWordPrefix.toString()
+                val correction = resolveAutoCorrection(rawPrefix)
+                if (correction != null && correction != rawPrefix) {
                     ic.beginBatchEdit()
-                    ic.deleteSurroundingText(1, 0)
-                    ic.commitText("I", 1)
+                    ic.deleteSurroundingText(rawPrefix.length, 0)
+                    ic.commitText(correction, 1)
                     ic.endBatchEdit()
+                    learnAndSyncWord(correction, LearningEvent.NORMAL_TYPING)
+                } else if (rawPrefix.isNotEmpty()) {
+                    learnAndSyncWord(rawPrefix, LearningEvent.NORMAL_TYPING)
                 }
                 ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
                 ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
                 currentWordPrefix.clear()
                 recentContextWords.clear()
+                suppressedAutoCorrectWord = null
                 updateAutoCapShiftState()
                 refreshPredictions()
             }
 
             ".", ",", "!", "?", ";", ":" -> {
                 val before = try { ic.getTextBeforeCursor(4, 0)?.toString() ?: "" } catch (_: Exception) { "" }
+                val rawPrefix = currentWordPrefix.toString()
+                val correction = resolveAutoCorrection(rawPrefix)
                 ic.beginBatchEdit()
                 try {
-                    if (isAutoCorrectEnabled && currentWordPrefix.toString() == "i") {
-                        ic.deleteSurroundingText(1, 0)
-                        ic.commitText("I$key ", 1)
-                        vocabEngine.onWordCommitted("I", recentContextWords, LearningEvent.NORMAL_TYPING)
-                        addContextWord("I")
+                    if (correction != null && correction != rawPrefix) {
+                        val replacement = "$correction$key "
+                        ic.deleteSurroundingText(rawPrefix.length, 0)
+                        ic.commitText(replacement, 1)
+                        lastAutoCorrectedOriginal = rawPrefix
+                        lastAutoCorrectedReplacement = replacement
+                        learnAndSyncWord(correction, LearningEvent.NORMAL_TYPING)
+                        addContextWord(correction)
                         currentWordPrefix.clear()
                     } else if ((hadAutoSpace || prevGlideWord != null) && before.endsWith(" ")) {
                         ic.deleteSurroundingText(1, 0)
@@ -798,13 +921,16 @@ class KeybordIME : InputMethodService() {
                     } else {
                         ic.commitText(key, 1)
                         if (currentWordPrefix.isNotEmpty()) {
-                            addContextWord(currentWordPrefix.toString())
+                            val committed = currentWordPrefix.toString()
+                            learnAndSyncWord(committed, LearningEvent.NORMAL_TYPING)
+                            addContextWord(committed)
                             currentWordPrefix.clear()
                         }
                     }
                 } finally {
                     ic.endBatchEdit()
                 }
+                suppressedAutoCorrectWord = null
                 if (keyboardView.shiftState == KeyboardView.ShiftState.SHIFTED) {
                     keyboardView.shiftState = KeyboardView.ShiftState.OFF
                 }
@@ -819,13 +945,16 @@ class KeybordIME : InputMethodService() {
                     key
                 }
 
+                suppressedAutoCorrectWord = null
                 ic.commitText(charToCommit, 1)
 
                 if (charToCommit.length == 1 && (charToCommit[0].isLetter() || charToCommit[0] == '\'')) {
                     currentWordPrefix.append(charToCommit)
                 } else {
                     if (currentWordPrefix.isNotEmpty()) {
-                        addContextWord(currentWordPrefix.toString())
+                        val committed = currentWordPrefix.toString()
+                        learnAndSyncWord(committed, LearningEvent.NORMAL_TYPING)
+                        addContextWord(committed)
                         currentWordPrefix.clear()
                     }
                 }
@@ -881,17 +1010,32 @@ class KeybordIME : InputMethodService() {
         }
     }
 
+    private fun handleSpaceSwipeStateChanged(active: Boolean) {
+        if (active) {
+            isSwipeSession = false
+            touchPoints.clear()
+            gestureOverlayView.clearTrail()
+            lastAutoCorrectedOriginal = null
+            lastAutoCorrectedReplacement = null
+            lastGlideCommittedWord = null
+        } else {
+            currentInputConnection?.let { ic ->
+                syncWordPrefixFromCursor(ic)
+                updateAutoCapShiftState()
+                refreshPredictions()
+            }
+        }
+    }
+
     private fun moveCursorBySteps(deltaSteps: Int) {
         val ic = currentInputConnection ?: return
         if (deltaSteps == 0) return
         val keyCode = if (deltaSteps < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
-        val count = kotlin.math.abs(deltaSteps).coerceAtMost(8)
+        val count = kotlin.math.abs(deltaSteps).coerceAtMost(12)
         for (i in 0 until count) {
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
             ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
         }
-        syncWordPrefixFromCursor(ic)
-        refreshPredictions()
     }
 
     private fun onMicButtonPressed() {
@@ -983,11 +1127,35 @@ class KeybordIME : InputMethodService() {
 
         val selected = try { ic.getSelectedText(0) } catch (_: Exception) { null }
         if (!selected.isNullOrEmpty()) {
+            lastAutoCorrectedOriginal = null
+            lastAutoCorrectedReplacement = null
             ic.commitText("", 1)
             syncWordPrefixFromCursor(ic)
             updateAutoCapShiftState()
             refreshPredictions()
             return
+        }
+
+        val pendingOrig = lastAutoCorrectedOriginal
+        val pendingRepl = lastAutoCorrectedReplacement
+        lastAutoCorrectedOriginal = null
+        lastAutoCorrectedReplacement = null
+        if (pendingOrig != null && pendingRepl != null) {
+            val checkBefore = try { ic.getTextBeforeCursor(pendingRepl.length + 2, 0)?.toString() } catch (_: Exception) { null }
+            if (checkBefore != null && checkBefore.endsWith(pendingRepl)) {
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(pendingRepl.length, 0)
+                ic.commitText(pendingOrig, 1)
+                ic.endBatchEdit()
+                val correctedWord = pendingRepl.trimEnd('.', ',', '!', '?', ';', ':', ' ')
+                vocabEngine.onManualCorrection(correctedWord, pendingOrig, recentContextWords)
+                lexicon.insert(pendingOrig.lowercase(), 800f)
+                suppressedAutoCorrectWord = pendingOrig.lowercase()
+                syncWordPrefixFromCursor(ic)
+                updateAutoCapShiftState()
+                refreshPredictions()
+                return
+            }
         }
 
         if (lastCommittedWord != null && wasLastCommittedFromSuggestion) {
@@ -1119,13 +1287,29 @@ class KeybordIME : InputMethodService() {
         }
     }
 
+    private fun learnAndSyncWord(word: String, event: LearningEvent) {
+        val clean = word.trim()
+        if (clean.isEmpty()) return
+        vocabEngine.onWordCommitted(clean, recentContextWords, event)
+        val lower = clean.lowercase()
+        if (!lexicon.contains(lower) && (
+                event == LearningEvent.SUGGESTION_ACCEPTED ||
+                event == LearningEvent.MANUAL_CORRECTION ||
+                vocabEngine.personalDictionary.contains(lower) ||
+                vocabEngine.storage.searchPrefix(lower, 5).any { it.word == lower }
+            )
+        ) {
+            lexicon.insert(lower, 850f)
+        }
+    }
+
     private fun commitWordWithSpace(word: String, event: LearningEvent) {
         val ic = currentInputConnection ?: return
         ic.beginBatchEdit()
         ic.commitText("$word ", 1)
         ic.endBatchEdit()
 
-        vocabEngine.onWordCommitted(word, recentContextWords, event)
+        learnAndSyncWord(word, event)
         addContextWord(word)
         currentWordPrefix.clear()
 
@@ -1137,6 +1321,39 @@ class KeybordIME : InputMethodService() {
     private fun commitCandidate(selectedWord: String) {
         val ic = currentInputConnection ?: return
 
+        val pendingOrig = lastAutoCorrectedOriginal
+        val pendingRepl = lastAutoCorrectedReplacement
+        if (pendingOrig != null && pendingRepl != null && currentWordPrefix.isEmpty()) {
+            val checkBefore = try { ic.getTextBeforeCursor(pendingRepl.length + 2, 0)?.toString() } catch (_: Exception) { null }
+            if (checkBefore != null && checkBefore.endsWith(pendingRepl)) {
+                val suffix = if (pendingRepl.endsWith(" ")) " " else ""
+                ic.beginBatchEdit()
+                ic.deleteSurroundingText(pendingRepl.length, 0)
+                ic.commitText("$selectedWord$suffix", 1)
+                ic.endBatchEdit()
+                lastAutoCorrectedOriginal = null
+                lastAutoCorrectedReplacement = null
+                val correctedWord = pendingRepl.trimEnd('.', ',', '!', '?', ';', ':', ' ')
+                if (selectedWord == pendingOrig) {
+                    vocabEngine.onManualCorrection(correctedWord, selectedWord, recentContextWords)
+                    suppressedAutoCorrectWord = selectedWord.lowercase()
+                    lexicon.insert(selectedWord.lowercase(), 850f)
+                } else {
+                    learnAndSyncWord(selectedWord, LearningEvent.SUGGESTION_ACCEPTED)
+                }
+                if (recentContextWords.isNotEmpty() && recentContextWords.last() == correctedWord) {
+                    recentContextWords[recentContextWords.lastIndex] = selectedWord
+                } else {
+                    addContextWord(selectedWord)
+                }
+                lastCommittedWord = selectedWord
+                wasLastCommittedFromSuggestion = true
+                updateAutoCapShiftState()
+                refreshPredictions()
+                return
+            }
+        }
+
         val prevGlide = lastGlideCommittedWord
         if (prevGlide != null && currentWordPrefix.isEmpty()) {
             ic.beginBatchEdit()
@@ -1146,6 +1363,7 @@ class KeybordIME : InputMethodService() {
             lastGlideCommittedWord = selectedWord
             autoInsertedSpaceBeforePunctuation = true
             vocabEngine.onManualCorrection(prevGlide, selectedWord, recentContextWords)
+            lexicon.insert(selectedWord.lowercase(), 850f)
             if (recentContextWords.isNotEmpty() && recentContextWords.last() == prevGlide) {
                 recentContextWords[recentContextWords.lastIndex] = selectedWord
             } else {
@@ -1164,6 +1382,8 @@ class KeybordIME : InputMethodService() {
             currentWordPrefix.clear()
         }
 
+        lastAutoCorrectedOriginal = null
+        lastAutoCorrectedReplacement = null
         commitWordWithSpace(selectedWord, LearningEvent.SUGGESTION_ACCEPTED)
         updateAutoCapShiftState()
         refreshPredictions()
@@ -1191,21 +1411,38 @@ class KeybordIME : InputMethodService() {
         suggestionStripView.setRecentClipboardItems(recents)
     }
 
+    private fun showKeyboardMain() {
+        if (::emojiPanelView.isInitialized) emojiPanelView.visibility = View.GONE
+        if (::inlineClipboardTray.isInitialized) inlineClipboardTray.visibility = View.GONE
+        if (::keyboardFrame.isInitialized) keyboardFrame.visibility = View.VISIBLE
+        if (::suggestionStripView.isInitialized) suggestionStripView.setEmojiPanelActive(false)
+    }
+
+    private fun toggleEmojiPanel() {
+        if (emojiPanelView.visibility == View.VISIBLE) {
+            showKeyboardMain()
+        } else {
+            inlineClipboardTray.visibility = View.GONE
+            keyboardFrame.visibility = View.GONE
+            emojiPanelView.visibility = View.VISIBLE
+            suggestionStripView.setEmojiPanelActive(true)
+        }
+    }
+
     private fun toggleInlineClipboardTray() {
         if (inlineClipboardTray.visibility == View.VISIBLE) {
-            inlineClipboardTray.visibility = View.GONE
-            keyboardFrame.visibility = View.VISIBLE
+            showKeyboardMain()
         } else {
+            emojiPanelView.visibility = View.GONE
+            suggestionStripView.setEmojiPanelActive(false)
             inlineClipboardTray.attachClipboard(
                 manager = clipboardManager,
                 onSelect = { text ->
                     currentInputConnection?.commitText(text, 1)
-                    inlineClipboardTray.visibility = View.GONE
-                    keyboardFrame.visibility = View.VISIBLE
+                    showKeyboardMain()
                 },
                 onClose = {
-                    inlineClipboardTray.visibility = View.GONE
-                    keyboardFrame.visibility = View.VISIBLE
+                    showKeyboardMain()
                 }
             )
             keyboardFrame.visibility = View.GONE
@@ -1221,10 +1458,21 @@ class KeybordIME : InputMethodService() {
     }
 
     private fun applyTheme(theme: ThemeModel) {
-        this.activeTheme = theme
-        if (::suggestionStripView.isInitialized) suggestionStripView.theme = theme
-        if (::keyboardView.isInitialized) keyboardView.theme = theme
-        if (::gestureOverlayView.isInitialized) gestureOverlayView.theme = theme
-        if (::popPreviewView.isInitialized) popPreviewView.theme = theme
+        this.baseTheme = theme
+        val effective = if (::layoutPrefs.isInitialized) layoutPrefs.applyTo(theme) else theme
+        this.activeTheme = effective
+        if (::suggestionStripView.isInitialized) suggestionStripView.theme = effective
+        if (::keyboardView.isInitialized) {
+            keyboardView.theme = effective
+            if (::layoutPrefs.isInitialized) {
+                keyboardView.showNumberRow = layoutPrefs.showNumberRow
+                keyboardView.showSecondarySymbols = layoutPrefs.showSecondarySymbols
+                keyboardView.vibrationDurationMs = layoutPrefs.vibrationDurationMs
+            }
+        }
+        if (::gestureOverlayView.isInitialized) gestureOverlayView.theme = effective
+        if (::popPreviewView.isInitialized) popPreviewView.theme = effective
+        if (::emojiPanelView.isInitialized) emojiPanelView.theme = effective
+        if (::inlineClipboardTray.isInitialized) inlineClipboardTray.theme = effective
     }
 }

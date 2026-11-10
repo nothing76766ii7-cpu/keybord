@@ -20,7 +20,6 @@ import java.lang.reflect.Proxy
 class MagicAndRamblerTest {
 
     private fun createBufferInputConnection(buffer: StringBuilder): InputConnection {
-        var selectionEnd = buffer.length
         return Proxy.newProxyInstance(
             InputConnection::class.java.classLoader,
             arrayOf(InputConnection::class.java)
@@ -30,7 +29,6 @@ class MagicAndRamblerTest {
                 "commitText" -> {
                     val text = (args?.getOrNull(0) as? CharSequence)?.toString().orEmpty()
                     buffer.append(text)
-                    selectionEnd = buffer.length
                     true
                 }
                 "deleteSurroundingText" -> {
@@ -39,7 +37,6 @@ class MagicAndRamblerTest {
                     if (remove > 0) {
                         buffer.delete(buffer.length - remove, buffer.length)
                     }
-                    selectionEnd = buffer.length
                     true
                 }
                 "getTextBeforeCursor" -> buffer.toString()

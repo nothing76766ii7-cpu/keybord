@@ -4,87 +4,104 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
+import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewGroup.MarginLayoutParams
-import android.widget.*
+import android.widget.EditText
+import android.widget.HorizontalScrollView
+import android.widget.LinearLayout
+import android.widget.PopupMenu
+import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.recyclerview.widget.GridLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import com.keybord.settings.KeyboardLayoutCustomizeActivity
+import com.keybord.ui.UiKit
 import java.io.File
-
-fun View.applySystemBarPadding(leftPx: Int, topPx: Int, rightPx: Int, bottomPx: Int) {
-    ViewCompat.setOnApplyWindowInsetsListener(this) { v, insets ->
-        val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
-        v.setPadding(leftPx + bars.left, topPx + bars.top, rightPx + bars.right, bottomPx + bars.bottom)
-        insets
-    }
-    ViewCompat.requestApplyInsets(this)
-}
 
 /**
  * Gallery displaying all built-in, extracted, and user-created themes with category filtering.
- * Supports 1-tap activation, theme creation, import and export.
+ * Supports 1-tap activation, theme creation, import and export, plus quick jump to Height & Buttons Studio.
  */
 class ThemeGalleryActivity : AppCompatActivity() {
 
     private lateinit var themeRepo: ThemeRepository
+    private lateinit var layoutPrefs: KeyboardLayoutPrefs
     private lateinit var recyclerView: RecyclerView
     private lateinit var categoryBar: LinearLayout
-    private lateinit var titleView: TextView
+    private var headerBarRef: LinearLayout? = null
     private var selectedCategory: ThemeCategory = ThemeCategory.ALL
     private val PICK_THEME_FILE_REQUEST = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         themeRepo = ThemeRepository(this)
+        layoutPrefs = KeyboardLayoutPrefs(this)
 
         val dp = resources.displayMetrics.density
-        val pad = (16 * dp).toInt()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setBackgroundColor(Color.parseColor("#12121A"))
-            setPadding(pad, pad, pad, pad)
+            setBackgroundColor(UiKit.BG_CANVAS)
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
-        root.applySystemBarPadding(pad, pad, pad, pad)
+        UiKit.applyEdgeToEdgePadding(root, leftDp = 14f, topDp = 14f, rightDp = 14f, bottomDp = 14f)
 
-        // Top Toolbar
-        val topBar = LinearLayout(this).apply {
+        val actionGroup = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding(0, 0, 0, (12 * dp).toInt())
         }
-
-        titleView = TextView(this).apply {
-            text = "Theme Gallery"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-
-        val importBtn = Button(this).apply {
-            text = "Import"
-            textSize = 12f
-            setOnClickListener { showImportDialog() }
-        }
-
-        val createBtn = Button(this).apply {
-            text = "+ New"
-            textSize = 12f
-            setOnClickListener {
-                startActivity(Intent(this@ThemeGalleryActivity, CustomThemeEditorActivity::class.java))
+        val importBtn = UiKit.createPillButton(this, "Import", filled = false) {
+            showImportDialog()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (6 * dp).toInt()
             }
         }
+        val createBtn = UiKit.createPillButton(this, "+ New", filled = true) {
+            startActivity(Intent(this@ThemeGalleryActivity, CustomThemeEditorActivity::class.java))
+        }
+        actionGroup.addView(importBtn)
+        actionGroup.addView(createBtn)
 
-        topBar.addView(titleView)
-        topBar.addView(importBtn)
-        topBar.addView(createBtn)
-        root.addView(topBar)
+        headerBarRef = UiKit.createHeaderBar(
+            this,
+            title = "Appearance & Themes",
+            subtitle = "Tap any theme to apply across Keybord",
+            showBack = true,
+            trailingView = actionGroup
+        )
+        root.addView(headerBarRef)
+
+        // Height & Buttons Studio Banner
+        val studioBanner = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            background = UiKit.roundedDrawable(this@ThemeGalleryActivity, UiKit.ACCENT_SOFT, 14f, UiKit.ACCENT_PRIMARY, 1f)
+            setPadding((14 * dp).toInt(), (10 * dp).toInt(), (14 * dp).toInt(), (10 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply { bottomMargin = (10 * dp).toInt() }
+            setOnClickListener {
+                startActivity(Intent(this@ThemeGalleryActivity, KeyboardLayoutCustomizeActivity::class.java))
+            }
+        }
+        studioBanner.addView(
+            TextView(this).apply {
+                text = "📐 Adjust Key Height, Corners, Gaps & Number Row →"
+                textSize = 12.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UiKit.TEXT_PRIMARY)
+            }
+        )
+        root.addView(studioBanner)
 
         // Category Filter Chips
         categoryBar = LinearLayout(this).apply {
@@ -107,7 +124,8 @@ class ThemeGalleryActivity : AppCompatActivity() {
             layoutManager = GridLayoutManager(this@ThemeGalleryActivity, 2)
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+                0,
+                1f
             )
         }
         root.addView(recyclerView)
@@ -142,9 +160,16 @@ class ThemeGalleryActivity : AppCompatActivity() {
             val chip = TextView(this).apply {
                 text = cat.label
                 textSize = 12f
-                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#B0B4C3"))
-                setBackgroundColor(if (isSelected) Color.parseColor("#4285F4") else Color.parseColor("#1D1F2D"))
-                setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
+                typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                setTextColor(if (isSelected) Color.WHITE else UiKit.TEXT_SECONDARY)
+                background = UiKit.roundedDrawable(
+                    this@ThemeGalleryActivity,
+                    if (isSelected) UiKit.ACCENT_PRIMARY else UiKit.SURFACE_CARD,
+                    12f,
+                    if (isSelected) null else UiKit.BORDER_SUBTLE,
+                    1f
+                )
+                setPadding((12 * dp).toInt(), (7 * dp).toInt(), (12 * dp).toInt(), (7 * dp).toInt())
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT
@@ -166,12 +191,12 @@ class ThemeGalleryActivity : AppCompatActivity() {
         } else {
             allThemes.filter { it.category == selectedCategory || (selectedCategory == ThemeCategory.EFFECTS && it.effectStyle != EffectStyle.NONE) }
         }
-        titleView.text = "Themes (${themes.size})"
         val activeTheme = themeRepo.getActiveTheme()
 
         recyclerView.adapter = ThemeGridAdapter(
             themes = themes,
             activeThemeId = activeTheme.id,
+            showNumberRow = layoutPrefs.showNumberRow,
             onThemeSelected = { theme ->
                 themeRepo.setActiveTheme(theme.id)
                 Toast.makeText(this, "Theme '${theme.name}' applied!", Toast.LENGTH_SHORT).show()
@@ -277,6 +302,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
     private class ThemeGridAdapter(
         private val themes: List<ThemeModel>,
         private val activeThemeId: String,
+        private val showNumberRow: Boolean,
         private val onThemeSelected: (ThemeModel) -> Unit,
         private val onThemeEdit: (ThemeModel) -> Unit,
         private val onThemeExport: (ThemeModel) -> Unit,
@@ -296,48 +322,50 @@ class ThemeGalleryActivity : AppCompatActivity() {
             val dp = parent.context.resources.displayMetrics.density
             val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
-                setBackgroundColor(Color.parseColor("#1B1B26"))
                 layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (176 * dp).toInt()).apply {
-                    setMargins((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
+                    setMargins((5 * dp).toInt(), (5 * dp).toInt(), (5 * dp).toInt(), (5 * dp).toInt())
                 }
-                setPadding((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
+                setPadding((7 * dp).toInt(), (7 * dp).toInt(), (7 * dp).toInt(), (7 * dp).toInt())
             }
 
             val preview = ThemePreviewView(parent.context).apply {
-                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (110 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (112 * dp).toInt())
             }
 
             val bottomRow = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding((4 * dp).toInt(), (6 * dp).toInt(), (4 * dp).toInt(), (2 * dp).toInt())
+                setPadding((4 * dp).toInt(), (8 * dp).toInt(), (2 * dp).toInt(), (2 * dp).toInt())
             }
 
             val checkBadge = TextView(parent.context).apply {
                 text = "✓ "
-                setTextColor(Color.parseColor("#4285F4"))
+                setTextColor(UiKit.ACCENT_PRIMARY)
                 textSize = 14f
+                typeface = Typeface.DEFAULT_BOLD
                 visibility = View.GONE
             }
 
             val title = TextView(parent.context).apply {
-                setTextColor(Color.WHITE)
+                setTextColor(UiKit.TEXT_PRIMARY)
                 textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
                 maxLines = 1
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
 
             val effectBadge = TextView(parent.context).apply {
-                setTextColor(Color.parseColor("#93C5FD"))
-                setBackgroundColor(Color.parseColor("#243B82F6"))
+                setTextColor(UiKit.ACCENT_PRIMARY)
+                background = UiKit.roundedDrawable(parent.context, UiKit.ACCENT_SOFT, 6f)
                 textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
                 setPadding((6 * dp).toInt(), (2 * dp).toInt(), (6 * dp).toInt(), (2 * dp).toInt())
                 visibility = View.GONE
             }
 
             val moreBtn = TextView(parent.context).apply {
                 text = "⋮"
-                setTextColor(Color.parseColor("#AAAAAA"))
+                setTextColor(UiKit.TEXT_SECONDARY)
                 textSize = 16f
                 setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
             }
@@ -357,6 +385,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
             val theme = themes[position]
             val isActive = (theme.id == activeThemeId)
 
+            holder.preview.showNumberRow = showNumberRow
             holder.preview.theme = theme
             holder.title.text = theme.name
             holder.checkBadge.visibility = if (isActive) View.VISIBLE else View.GONE
@@ -367,8 +396,12 @@ class ThemeGalleryActivity : AppCompatActivity() {
                 holder.effectBadge.visibility = View.GONE
             }
 
-            holder.view.setBackgroundColor(
-                if (isActive) Color.parseColor("#253046") else Color.parseColor("#1B1B26")
+            holder.view.background = UiKit.roundedDrawable(
+                holder.view.context,
+                if (isActive) Color.parseColor("#1D273B") else UiKit.SURFACE_CARD,
+                16f,
+                if (isActive) UiKit.ACCENT_PRIMARY else UiKit.BORDER_SUBTLE,
+                if (isActive) 2f else 1f
             )
 
             holder.view.setOnClickListener { onThemeSelected(theme) }

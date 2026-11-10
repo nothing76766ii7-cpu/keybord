@@ -1632,4 +1632,97 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_hinglish_glide_swipes() {
+        let mut map = HashMap::new();
+        let row1 = "qwertyuiop";
+        let row2 = "asdfghjkl";
+        let row3 = "zxcvbnm";
+        let gap = 12.0f32;
+        let avail_w = 1080.0f32 - 11.0 * gap;
+        let key_w = avail_w / 10.0;
+        let key_h = 162.0f32;
+
+        for (i, c) in row1.chars().enumerate() {
+            let left = gap + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, gap, left + key_w, gap + key_h)));
+        }
+        let row2_offset = gap + 0.5 * (key_w + gap);
+        for (i, c) in row2.chars().enumerate() {
+            let left = row2_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 2.0 * gap + key_h, left + key_w, 2.0 * gap + 2.0 * key_h)));
+        }
+        let row3_offset = gap + 1.5 * (key_w + gap);
+        for (i, c) in row3.chars().enumerate() {
+            let left = row3_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 3.0 * gap + 2.0 * key_h, left + key_w, 3.0 * gap + 3.0 * key_h)));
+        }
+
+        let mut lex = TrieLexicon::new();
+        lex.load_from_str(include_str!("../../../app/src/main/assets/wordlist.txt"));
+        lex.load_from_str(include_str!("../../../app/src/main/assets/wordlist_hinglish.txt"));
+        let decoder = GlideDecoder::new(map.clone(), lex, None);
+
+        let build_curved = |word: &str| -> Vec<TouchPoint> {
+            let dedup = dedup_consecutive_chars(word);
+            let mut waypoints: Vec<(f32, f32)> = dedup
+                .iter()
+                .map(|c| {
+                    let k = &map[c];
+                    (k.center_x + 10.0, k.center_y + 16.0)
+                })
+                .collect();
+            if waypoints.len() >= 3 {
+                let orig = waypoints.clone();
+                for i in 1..(waypoints.len() - 1) {
+                    let mid_x = 0.5 * (orig[i - 1].0 + orig[i + 1].0);
+                    let mid_y = 0.5 * (orig[i - 1].1 + orig[i + 1].1);
+                    waypoints[i].0 = 0.72 * orig[i].0 + 0.28 * mid_x;
+                    waypoints[i].1 = 0.72 * orig[i].1 + 0.28 * mid_y;
+                }
+            }
+            let mut pts = Vec::new();
+            let mut t = 1000i64;
+            pts.push(TouchPoint::new(waypoints[0].0, waypoints[0].1, t, 1.0));
+            for seg in waypoints.windows(2) {
+                for step in 1..=5 {
+                    let f = step as f32 / 5.0;
+                    t += 18;
+                    pts.push(TouchPoint::new(
+                        seg[0].0 + f * (seg[1].0 - seg[0].0),
+                        seg[0].1 + f * (seg[1].1 - seg[0].1),
+                        t,
+                        1.0,
+                    ));
+                }
+            }
+            pts
+        };
+
+        let hinglish_words = [
+            "bhai", "namaste", "shukriya", "bahut", "achha", "theek",
+            "kahan", "kaise", "matlab", "bilkul", "zaroor", "zindagi",
+            "dosti", "chalo", "samajh", "pyaar", "bindaas", "jugaad",
+            "hamesha", "khushi",
+        ];
+
+        let mut hits = 0usize;
+        let mut misses = Vec::new();
+        for &w in &hinglish_words {
+            let res = decoder.decode_gesture(&build_curved(w));
+            let top = res.first().map(|c| c.word.as_str()).unwrap_or("<none>");
+            if top == w {
+                hits += 1;
+            } else {
+                misses.push(format!("{} -> {:?}", w, res.iter().take(3).map(|c| &c.word).collect::<Vec<_>>()));
+            }
+        }
+        println!("HINGLISH_BENCH: {}/{} top-1; misses: {:?}", hits, hinglish_words.len(), misses);
+        assert!(
+            hits * 100 >= hinglish_words.len() * 88,
+            "Expected >=88% top-1 on Hinglish curved swipes, got {}/{} — {:?}",
+            hits, hinglish_words.len(), misses
+        );
+    }
 }

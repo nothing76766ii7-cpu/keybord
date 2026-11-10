@@ -117,7 +117,185 @@ class TrieLexicon {
         return if (current.isWord) current.frequency else 0f
     }
 
+    fun clear() {
+        root.children.clear()
+        root.isWord = false
+        root.frequency = 0f
+        root.maxSubtreeFreq = 0f
+        root.word = null
+        endpointBuckets.clear()
+        wordFrequencies.clear()
+        wordCount = 0
+        maxFrequency = 1000f
+    }
+
+    /**
+     * Returns top-frequency prefix completions from the static dictionary + synced personal/learned words.
+     */
+    fun searchPrefix(prefix: String, limit: Int = 5): List<Pair<String, Float>> {
+        val clean = prefix.trim().lowercase().filter { it in 'a'..'z' }
+        if (clean.isEmpty()) return emptyList()
+        var node = root
+        for (ch in clean) {
+            node = node.children[ch] ?: return emptyList()
+        }
+        val matches = ArrayList<Pair<String, Float>>(16)
+        val pq = java.util.PriorityQueue<Node>(32) { a, b -> b.maxSubtreeFreq.compareTo(a.maxSubtreeFreq) }
+        pq.add(node)
+        var visited = 0
+        while (pq.isNotEmpty() && visited < 160) {
+            val curr = pq.poll() ?: break
+            visited++
+            val w = curr.word
+            if (curr.isWord && w != null) {
+                matches.add(w to curr.frequency)
+            }
+            for (child in curr.children.values) {
+                if (matches.size >= limit * 3 && child.maxSubtreeFreq < (matches.lastOrNull()?.second ?: 0f)) {
+                    continue
+                }
+                pq.add(child)
+            }
+        }
+        matches.sortByDescending { it.second }
+        return matches.distinctBy { it.first }.take(limit)
+    }
+
+    /**
+     * Fast edit-distance <= 1 spell correction (substitution, insertion, deletion, adjacent transposition)
+     * plus common English & Hinglish shorthand typo map.
+     */
+    fun findBestCorrection(rawWord: String): String? {
+        val lower = rawWord.trim().lowercase()
+        if (lower.length < 2 || contains(lower)) return null
+        if (!lower.all { it in 'a'..'z' }) return null
+
+        COMMON_TYPO_MAP[lower]?.let { mapped ->
+            if (contains(mapped)) return preserveInputCase(rawWord, mapped)
+        }
+
+        val targetLen = lower.length
+        var bestWord: String? = null
+        var bestScore = -1f
+        val c0 = lower[0]
+        val c1 = if (lower.length > 1) lower[1] else c0
+
+        for ((candidate, freq) in wordFrequencies) {
+            if (candidate.contains('\'')) continue
+            val candLen = candidate.length
+            if (candLen < 2 || kotlin.math.abs(candLen - targetLen) > 1) continue
+            val firstMatch = candidate[0] == c0 || candidate[0] == c1 || (candLen > 1 && candidate[1] == c0)
+            if (!firstMatch) continue
+            if (freq < 250f) continue
+
+            if (isOneEditAway(lower, candidate)) {
+                val boost = if (candidate[0] == c0) 1.35f else 1.0f
+                val score = freq * boost
+                if (score > bestScore) {
+                    bestScore = score
+                    bestWord = candidate
+                }
+            }
+        }
+        return bestWord?.let { preserveInputCase(rawWord, it) }
+    }
+
+    private fun isOneEditAway(a: String, b: String): Boolean {
+        val la = a.length
+        val lb = b.length
+        if (la == lb) {
+            var diff1 = -1
+            var diff2 = -1
+            for (i in 0 until la) {
+                if (a[i] != b[i]) {
+                    if (diff1 < 0) diff1 = i
+                    else if (diff2 < 0) diff2 = i
+                    else return false
+                }
+            }
+            if (diff2 < 0) return diff1 >= 0 // 1 substitution
+            // Adjacent transposition ("teh" <-> "the", "bhia" <-> "bhai")
+            return diff2 == diff1 + 1 && a[diff1] == b[diff2] && a[diff2] == b[diff1]
+        }
+        val shorter = if (la < lb) a else b
+        val longer = if (la < lb) b else a
+        var i = 0
+        var j = 0
+        var skipped = false
+        while (i < shorter.length && j < longer.length) {
+            if (shorter[i] == longer[j]) {
+                i++
+                j++
+            } else {
+                if (skipped) return false
+                skipped = true
+                j++
+            }
+        }
+        return true
+    }
+
+    private fun preserveInputCase(original: String, corrected: String): String {
+        return when {
+            original.all { it.isUpperCase() } -> corrected.uppercase()
+            original.firstOrNull()?.isUpperCase() == true -> corrected.replaceFirstChar { it.uppercase() }
+            else -> corrected
+        }
+    }
+
     companion object {
+        private val COMMON_TYPO_MAP = mapOf(
+            "teh" to "the", "recieve" to "receive", "seperate" to "separate",
+            "definately" to "definitely", "untill" to "until", "occured" to "occurred",
+            "wierd" to "weird", "acheive" to "achieve", "tommorrow" to "tomorrow",
+            "bhia" to "bhai", "kyaa" to "kya", "nhi" to "nahi",
+            "thk" to "theek", "haann" to "haan", "achaa" to "achha"
+        )
+
+        private val HINGLISH_FALLBACK = mapOf(
+            "hai" to 920f, "hain" to 905f, "kya" to 925f, "kyun" to 880f, "kyu" to 870f,
+            "nahi" to 920f, "nhi" to 880f, "haan" to 915f, "bhai" to 920f, "yaar" to 915f,
+            "theek" to 915f, "thik" to 885f, "achha" to 910f, "accha" to 910f, "bahut" to 915f,
+            "badiya" to 895f, "badhiya" to 895f, "mast" to 890f, "kaise" to 910f, "kahan" to 905f,
+            "kab" to 895f, "kaun" to 890f, "chalo" to 905f, "karo" to 895f, "raha" to 895f,
+            "hoon" to 905f, "mein" to 895f, "tum" to 905f, "aap" to 905f, "hum" to 890f,
+            "woh" to 890f, "yeh" to 895f, "sab" to 905f, "kuch" to 905f, "namaste" to 900f,
+            "shukriya" to 895f, "abhi" to 905f, "kal" to 900f, "aaj" to 905f, "ghar" to 905f,
+            "kaam" to 900f, "khana" to 895f, "pani" to 895f, "chai" to 900f, "pyaar" to 895f,
+            "dost" to 895f, "zindagi" to 895f, "khush" to 890f, "matlab" to 905f, "bilkul" to 905f,
+            "zaroor" to 895f, "jaldi" to 900f, "thoda" to 895f, "zyada" to 895f, "sahi" to 905f,
+            "galat" to 895f, "chahiye" to 900f, "mera" to 905f, "meri" to 900f, "tera" to 895f,
+            "apna" to 900f, "saath" to 895f, "hamesha" to 895f, "milte" to 895f, "batao" to 895f
+        )
+
+        private val NEXT_WORD_HINTS = mapOf(
+            "kya" to listOf("hai", "haal", "kar"),
+            "theek" to listOf("hai", "hoon", "tha"),
+            "thik" to listOf("hai", "hoon", "tha"),
+            "koi" to listOf("baat", "nahi", "kuch"),
+            "bahut" to listOf("achha", "badiya", "zyada"),
+            "sab" to listOf("theek", "badhiya", "kuch"),
+            "kahan" to listOf("ho", "hai", "ja"),
+            "kaise" to listOf("ho", "hain", "hai"),
+            "kal" to listOf("milte", "subah", "raat"),
+            "chalo" to listOf("theek", "phir", "ghar"),
+            "bhai" to listOf("kya", "kaise", "yaar"),
+            "yaar" to listOf("kya", "chal", "bhai"),
+            "main" to listOf("theek", "ghar", "abhi"),
+            "aap" to listOf("kaise", "kahan", "theek"),
+            "haan" to listOf("bhai", "theek", "bilkul"),
+            "nahi" to listOf("bhai", "yaar", "hai"),
+            "good" to listOf("morning", "night", "luck"),
+            "thank" to listOf("you", "god", "you!"),
+            "see" to listOf("you", "the", "that"),
+            "how" to listOf("are", "about", "is"),
+            "i" to listOf("am", "have", "will"),
+            "i'm" to listOf("good", "theek", "here")
+        )
+
+        fun getContextualFallbackPredictions(prevWord: String): List<String> =
+            NEXT_WORD_HINTS[prevWord.lowercase().trim()] ?: emptyList()
+
         fun canonicalizeDisplayWord(cleanLower: String): String = when (cleanLower) {
             "i" -> "I"
             "i'm" -> "I'm"
@@ -151,9 +329,9 @@ class TrieLexicon {
     }
 
     /**
-     * Loads lexicon from assets/wordlist.txt, falling back to starter vocabulary only if missing/empty.
+     * Loads lexicon from assets/wordlist.txt and optional assets/wordlist_hinglish.txt.
      */
-    fun loadFromAssets(context: Context) {
+    fun loadFromAssets(context: Context, includeHinglish: Boolean = true) {
         val loaded = try {
             context.assets.open("wordlist.txt")
                 .bufferedReader()
@@ -163,6 +341,24 @@ class TrieLexicon {
         }
         if (loaded == 0) {
             loadDefaultVocabulary()
+        }
+        if (includeHinglish) {
+            val hinglishLoaded = try {
+                context.assets.open("wordlist_hinglish.txt")
+                    .bufferedReader()
+                    .useLines { lines -> loadFromSequence(lines) }
+            } catch (_: Exception) {
+                0
+            }
+            if (hinglishLoaded == 0) {
+                loadHinglishDefaults()
+            }
+        }
+    }
+
+    fun loadHinglishDefaults() {
+        for ((word, freq) in HINGLISH_FALLBACK) {
+            insert(word, freq)
         }
     }
 
