@@ -46,7 +46,7 @@ class AboutActivity : AppCompatActivity() {
         }
 
         val version = TextView(this).apply {
-            text = "Version 1.1.5 (November 2026)"
+            text = "Version 1.1.6 (November 2026)"
             textSize = 14f
             setTextColor(Color.parseColor("#4285F4"))
             setPadding(0, 0, 0, (20 * dp).toInt())

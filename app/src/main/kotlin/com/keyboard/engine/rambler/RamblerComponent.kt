@@ -48,7 +48,7 @@ data class TextChunk(
     val rawText: String,
     val cleanedText: String,
     val startOffset: Int,
-    val endOffset: Int,
+    var endOffset: Int,
     val timestamp: Long = System.currentTimeMillis(),
     var currentState: ChunkState = ChunkState.CLEANED_REWRITTEN
 )
@@ -89,8 +89,10 @@ class RamblerTextProcessor(private val config: RamblerConfig = RamblerConfig()) 
     fun processRawStream(rawText: String, isFinalPause: Boolean = false): String {
         if (rawText.isBlank()) return rawText
 
+        val preprocessed = applySpokenPunctuationCommands(rawText.trim())
+
         try {
-            val nativeResult = com.keyboard.engine.bridge.NativeBridge.ramblerProcessStream(rawText, isFinalPause)
+            val nativeResult = com.keyboard.engine.bridge.NativeBridge.ramblerProcessStream(preprocessed, isFinalPause)
             if (nativeResult.isNotEmpty()) {
                 return nativeResult
             }
@@ -98,13 +100,13 @@ class RamblerTextProcessor(private val config: RamblerConfig = RamblerConfig()) 
             // fallback
         }
 
-        var text = rawText.trim()
+        var text = preprocessed
 
         // 1. Remove spoken disfluencies & stuttered tokens
         if (config.disfluencyFilterEnabled) {
             text = disfluencyRegex.replace(text, "")
             text = stutterRegex.replace(text, "$1")
-            text = text.replace(Regex("\\s{2,}"), " ")
+            text = text.replace(Regex(" {2,}"), " ")
         }
 
         // 2. Normalize spoken numbers and symbols
@@ -120,6 +122,17 @@ class RamblerTextProcessor(private val config: RamblerConfig = RamblerConfig()) 
             text = applySmartPunctuation(text)
         }
 
+        return text.trim()
+    }
+
+    private fun applySpokenPunctuationCommands(input: String): String {
+        var text = input
+        text = text.replace(Regex("(?i)\\s*\\b(?:new line|newline)\\b\\s*"), "\n")
+        text = text.replace(Regex("(?i)\\s*\\bquestion mark\\b"), "?")
+        text = text.replace(Regex("(?i)\\s*\\bexclamation (?:mark|point)\\b"), "!")
+        text = text.replace(Regex("(?i)\\s*\\b(?:period|full stop)\\b"), ".")
+        text = text.replace(Regex("(?i)\\s*\\bcomma\\b"), ",")
+        text = text.replace(Regex(" +([.,?!])"), "$1")
         return text.trim()
     }
 
@@ -295,23 +308,58 @@ class RamblerController(
     fun onStreamTokenReceived(token: String, isFinalPause: Boolean = false) {
         resetIdleTimer()
         rawBuffer.append(token)
+        applyBufferToEditor(isFinalPause)
+    }
 
-        val rawCurrent = rawBuffer.toString()
+    /**
+     * Handles cumulative partial/final hypotheses delivered by Android SpeechRecognizer.
+     */
+    fun onCumulativeHypothesisReceived(hypothesis: String, isFinal: Boolean): TextChunk? {
+        resetIdleTimer()
+        rawBuffer.clear()
+        rawBuffer.append(hypothesis)
+        return applyBufferToEditor(isFinal)
+    }
+
+    private fun applyBufferToEditor(isFinalPause: Boolean): TextChunk? {
+        val rawCurrent = rawBuffer.toString().trim()
         val cleaned = textProcessor.processRawStream(rawCurrent, isFinalPause)
+        val ic = inputConnection ?: return null
 
-        val ic = inputConnection
-        if (ic != null) {
-            if (isFinalPause) {
-                ic.setComposingText("", 1)
-                ic.commitText(cleaned, 1)
-                undoStateMachine.registerChunk(rawCurrent, cleaned, currentCommittedOffset)
-                currentCommittedOffset += cleaned.length
+        return if (isFinalPause) {
+            if (cleaned.isNotEmpty()) {
+                val before = try { ic.getTextBeforeCursor(4, 0)?.toString() } catch (_: Exception) { null }
+                val prefixSpace = if (!before.isNullOrEmpty() && !before.last().isWhitespace() &&
+                    before.last() !in charArrayOf('(', '[', '"', '\'', '\n')
+                ) " " else ""
+                val toCommit = "$prefixSpace$cleaned"
+                ic.beginBatchEdit()
+                try {
+                    ic.setComposingText("", 1)
+                    ic.commitText(toCommit, 1)
+                } finally {
+                    ic.endBatchEdit()
+                }
+                val chunkStart = currentCommittedOffset + prefixSpace.length
+                val chunk = undoStateMachine.registerChunk(rawCurrent, cleaned, chunkStart)
+                currentCommittedOffset = chunkStart + cleaned.length
                 rawBuffer.clear()
+                chunk
             } else {
-                ic.setComposingText(cleaned, 1)
+                ic.finishComposingText()
+                rawBuffer.clear()
+                null
             }
+        } else {
+            ic.setComposingText(cleaned, 1)
+            null
         }
     }
+
+    fun hasActiveToggleChunk(): Boolean = undoStateMachine.activeChunk != null
+
+    fun isShowingRawTranscript(): Boolean =
+        undoStateMachine.sessionState == RamblerSessionState.STATE_B_TRANSCRIPT
 
     fun toggleTranscriptRevert(): Boolean {
         val ic = inputConnection ?: return false
@@ -336,19 +384,28 @@ class RamblerController(
             val prevLen = if (chunk.currentState == ChunkState.RAW_TRANSCRIPT) chunk.cleanedText.length else chunk.rawText.length
             ic.deleteSurroundingText(prevLen, 0)
             ic.commitText(replacement, 1)
+            chunk.endOffset = chunk.startOffset + replacement.length
+            currentCommittedOffset = chunk.endOffset
         } finally {
             ic.endBatchEdit()
+        }
+    }
+
+    fun cancelStreaming() {
+        handler.removeCallbacks(idleTimeoutRunnable)
+        rawBuffer.clear()
+        try {
+            inputConnection?.setComposingText("", 1)
+            inputConnection?.finishComposingText()
+        } catch (_: Exception) {
+            // Safe ignore if IC closed
         }
     }
 
     fun finishStreaming(isIdling: Boolean = false) {
         handler.removeCallbacks(idleTimeoutRunnable)
         if (rawBuffer.isNotEmpty()) {
-            val finalCleaned = textProcessor.processRawStream(rawBuffer.toString(), isFinalPause = true)
-            inputConnection?.setComposingText("", 1)
-            inputConnection?.commitText(finalCleaned, 1)
-            undoStateMachine.registerChunk(rawBuffer.toString(), finalCleaned, currentCommittedOffset)
-            rawBuffer.clear()
+            applyBufferToEditor(isFinalPause = true)
         }
         if (isIdling) {
             undoStateMachine.endSession()

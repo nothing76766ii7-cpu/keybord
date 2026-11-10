@@ -63,6 +63,7 @@ class KeyboardView @JvmOverloads constructor(
     var onDeleteSwipeStart: (() -> Unit)? = null
     var onDeleteSwipeStep: ((wordCount: Int) -> Int)? = null
     var onDeleteSwipeFinish: ((commitDelete: Boolean) -> Unit)? = null
+    var onSpaceSwipeCursorStep: ((deltaSteps: Int) -> Unit)? = null
     var onKeyPositionsChanged: ((Map<Char, KeyPosition>) -> Unit)? = null
 
     var popPreviewView: KeyPopPreviewView? = null
@@ -102,6 +103,10 @@ class KeyboardView @JvmOverloads constructor(
     private var isDeleteSwipeActive = false
     private var activeDeleteSwipeCount = 0
     private var deleteRepeatTicks = 0
+
+    // Space-bar cursor slide state
+    private var spaceKeyDown: KeyDef? = null
+    private var spaceLastStepIndex = 0
 
     private val deleteRepeatRunnable = object : Runnable {
         override fun run() {
@@ -267,7 +272,9 @@ class KeyboardView @JvmOverloads constructor(
 
     fun getKeyPositions(): Map<Char, KeyPosition> = HashMap(keyPositions)
 
-    fun isAlphabeticKeyAt(x: Float, y: Float): Boolean {
+    fun isAlphabeticKeyAt(x: Float, y: Float): Boolean = isInAlphabeticGlideZone(x, y)
+
+    fun isInAlphabeticGlideZone(x: Float, y: Float): Boolean {
         val key = findKeyAt(x, y) ?: return false
         return key.code.length == 1 && key.code[0].isLetter()
     }
@@ -275,6 +282,8 @@ class KeyboardView @JvmOverloads constructor(
     fun cancelActiveTouch() {
         popPreviewView?.dismiss()
         resetDeleteGesture(commitSwipe = false)
+        spaceKeyDown = null
+        spaceLastStepIndex = 0
         pressedKey = null
         isSwipeGesture = false
         invalidate()
@@ -428,7 +437,24 @@ class KeyboardView @JvmOverloads constructor(
     }
 
     private fun findKeyAt(x: Float, y: Float): KeyDef? {
-        return activeKeys.find { it.bounds.contains(x, y) }
+        activeKeys.find { it.bounds.contains(x, y) }?.let { return it }
+        // Eliminate inter-key gap dead zones (5dp tolerance) by selecting nearest key center
+        val tolPx = 5f * resources.displayMetrics.density
+        var bestKey: KeyDef? = null
+        var bestDistSq = Float.MAX_VALUE
+        for (key in activeKeys) {
+            val b = key.bounds
+            if (x in (b.left - tolPx)..(b.right + tolPx) && y in (b.top - tolPx)..(b.bottom + tolPx)) {
+                val dx = x - b.centerX()
+                val dy = y - b.centerY()
+                val dSq = dx * dx + dy * dy
+                if (dSq < bestDistSq) {
+                    bestDistSq = dSq
+                    bestKey = key
+                }
+            }
+        }
+        return bestKey
     }
 
     fun handleTouchEvent(event: MotionEvent): Boolean {
@@ -439,6 +465,8 @@ class KeyboardView @JvmOverloads constructor(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 resetDeleteGesture(commitSwipe = false)
+                spaceKeyDown = null
+                spaceLastStepIndex = 0
                 touchDownTime = System.currentTimeMillis()
                 touchDownX = x
                 touchDownY = y
@@ -458,6 +486,9 @@ class KeyboardView @JvmOverloads constructor(
                     if (key.code == "⌫") {
                         deleteKeyDown = key
                         deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
+                    } else if (key.code == " ") {
+                        spaceKeyDown = key
+                        spaceLastStepIndex = 0
                     }
                 }
                 invalidate()
@@ -471,7 +502,26 @@ class KeyboardView @JvmOverloads constructor(
                     return true
                 }
 
-                val touchSlopPx = 16f * density
+                if (spaceKeyDown != null) {
+                    val dx = x - touchDownX
+                    val dy = Math.abs(y - touchDownY)
+                    val swipeStartPx = 16f * density
+                    val stepPx = 14f * density
+                    if (isSwipeGesture || (Math.abs(dx) > swipeStartPx && Math.abs(dx) >= dy)) {
+                        isSwipeGesture = true
+                        popPreviewView?.dismiss()
+                        val stepIndex = (dx / stepPx).toInt()
+                        val delta = stepIndex - spaceLastStepIndex
+                        if (delta != 0) {
+                            spaceLastStepIndex = stepIndex
+                            triggerHapticFeedback(8L)
+                            onSpaceSwipeCursorStep?.invoke(delta)
+                        }
+                        return true
+                    }
+                }
+
+                val touchSlopPx = 12f * density
                 val dist = Math.hypot((x - touchDownX).toDouble(), (y - touchDownY).toDouble()).toFloat()
                 if (dist > touchSlopPx) {
                     isSwipeGesture = true
@@ -496,6 +546,8 @@ class KeyboardView @JvmOverloads constructor(
                 if (activeDeleteKey != null) {
                     val shouldFireSingleTap = !isDeleteSwipeActive && !hasPerformedRepeatDelete && !isSwipeGesture
                     resetDeleteGesture(commitSwipe = true)
+                    spaceKeyDown = null
+                    spaceLastStepIndex = 0
                     pressedKey = null
                     isSwipeGesture = false
                     invalidate()
@@ -507,6 +559,8 @@ class KeyboardView @JvmOverloads constructor(
 
                 val targetKey = pressedKey ?: findKeyAt(x, y) ?: findKeyAt(touchDownX, touchDownY)
                 val wasSwipe = isSwipeGesture
+                spaceKeyDown = null
+                spaceLastStepIndex = 0
                 pressedKey = null
                 isSwipeGesture = false
                 invalidate()
@@ -521,6 +575,8 @@ class KeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_CANCEL -> {
                 popPreviewView?.dismiss()
                 resetDeleteGesture(commitSwipe = false)
+                spaceKeyDown = null
+                spaceLastStepIndex = 0
                 pressedKey = null
                 isSwipeGesture = false
                 invalidate()

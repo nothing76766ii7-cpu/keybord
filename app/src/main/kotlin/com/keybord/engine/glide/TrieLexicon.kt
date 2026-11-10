@@ -15,53 +15,117 @@ class TrieLexicon {
         var word: String? = null
     }
 
+    data class BucketEntry(
+        val word: String,
+        val dedupChars: List<Char>,
+        var frequency: Float
+    )
+
     val root = Node()
+    val endpointBuckets = HashMap<Pair<Char, Char>, MutableList<BucketEntry>>()
+    private val wordFrequencies = HashMap<String, Float>()
     var wordCount = 0
         private set
     var maxFrequency = 1000f
         private set
 
     /**
-     * Inserts a word with a base frequency into the Trie, propagating subtree max frequency.
+     * Inserts a word with a base frequency into the Trie and SHARK2 endpoint buckets.
+     * Indexes over ASCII alphabetic key characters so apostrophe contractions (e.g. don't, I'm)
+     * are natively swipeable without needing to lift onto an apostrophe key.
      */
     fun insert(word: String, frequency: Float = 1.0f) {
         if (word.isBlank()) return
         val cleanWord = word.trim().lowercase()
+        val keyChars = ArrayList<Char>(cleanWord.length)
+        for (ch in cleanWord) {
+            if (ch in 'a'..'z') {
+                keyChars.add(ch)
+            }
+        }
+        if (keyChars.isEmpty()) return
+        val display = canonicalizeDisplayWord(cleanWord)
+
         root.maxSubtreeFreq = maxOf(root.maxSubtreeFreq, frequency)
         var current = root
-        for (char in cleanWord) {
-            current = current.children.getOrPut(char) { Node() }
+        for (ch in keyChars) {
+            current = current.children.getOrPut(ch) { Node() }
             current.maxSubtreeFreq = maxOf(current.maxSubtreeFreq, frequency)
         }
-        if (!current.isWord) {
+        val isNew = !current.isWord
+        if (isNew) {
             wordCount++
         }
+        if (keyChars.size >= 2) {
+            val dedup = ArrayList<Char>(keyChars.size)
+            for (ch in keyChars) {
+                if (dedup.isEmpty() || dedup.last() != ch) {
+                    dedup.add(ch)
+                }
+            }
+            if (dedup.size >= 2) {
+                val keyPair = keyChars.first() to keyChars.last()
+                val bucket = endpointBuckets.getOrPut(keyPair) { ArrayList() }
+                val existing = bucket.firstOrNull { it.word == display }
+                if (existing != null) {
+                    existing.frequency = maxOf(existing.frequency, frequency)
+                } else {
+                    bucket.add(BucketEntry(display, dedup, frequency))
+                }
+            }
+        }
+        wordFrequencies[display] = maxOf(wordFrequencies[display] ?: 0f, frequency)
+        wordFrequencies[cleanWord] = maxOf(wordFrequencies[cleanWord] ?: 0f, frequency)
+
         current.isWord = true
-        current.frequency = maxOf(current.frequency, frequency)
+        val prevFreq = current.frequency
+        current.frequency = maxOf(prevFreq, frequency)
         maxFrequency = maxOf(maxFrequency, current.frequency)
-        current.word = cleanWord
+        if (isNew || frequency >= prevFreq) {
+            current.word = display
+        }
     }
 
     /**
-     * Checks if a word exists in the dictionary.
+     * Checks if a word or contraction exists in the dictionary.
      */
     fun contains(word: String): Boolean {
+        val clean = word.trim().lowercase()
+        if (wordFrequencies.containsKey(clean) || wordFrequencies.containsKey(canonicalizeDisplayWord(clean))) {
+            return true
+        }
         var current = root
-        for (char in word.lowercase()) {
-            current = current.children[char] ?: return false
+        for (ch in clean) {
+            if (ch !in 'a'..'z') continue
+            current = current.children[ch] ?: return false
         }
         return current.isWord
     }
 
     /**
-     * Retrieves the unigram frequency of a word (or 0 if not present).
+     * Retrieves the unigram frequency of a word or contraction (or 0 if not present).
      */
     fun getFrequency(word: String): Float {
+        val clean = word.trim().lowercase()
+        wordFrequencies[canonicalizeDisplayWord(clean)]?.let { return it }
+        wordFrequencies[clean]?.let { return it }
         var current = root
-        for (char in word.lowercase()) {
-            current = current.children[char] ?: return 0f
+        for (ch in clean) {
+            if (ch !in 'a'..'z') continue
+            current = current.children[ch] ?: return 0f
         }
         return if (current.isWord) current.frequency else 0f
+    }
+
+    companion object {
+        fun canonicalizeDisplayWord(cleanLower: String): String = when (cleanLower) {
+            "i" -> "I"
+            "i'm" -> "I'm"
+            "i've" -> "I've"
+            "i'll" -> "I'll"
+            "i'd" -> "I'd"
+            else -> cleanLower
+        }
     }
 
     /**

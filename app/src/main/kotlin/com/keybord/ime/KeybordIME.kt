@@ -1,10 +1,13 @@
 package com.keybord.ime
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.inputmethodservice.InputMethodService
-import android.os.Build
 import android.text.InputType
 import android.view.Gravity
+import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
@@ -15,6 +18,15 @@ import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.Toast
+import androidx.core.content.ContextCompat
+import com.keyboard.engine.magicwrite.MagicWritingCoordinator
+import com.keyboard.engine.magicwrite.WritingStyle
+import com.keyboard.engine.rambler.ChunkState
+import com.keyboard.engine.rambler.RamblerController
+import com.keyboard.engine.rambler.RamblerSessionState
+import com.keyboard.engine.rambler.RamblerUndoStateMachine
+import com.keyboard.engine.rambler.TextChunk
 import com.keybord.clipboard.InlineClipboardTrayView
 import com.keybord.clipboard.KeybordClipboardManager
 import com.keybord.engine.glide.*
@@ -24,11 +36,14 @@ import com.keybord.settings.KeybordSettingsActivity
 import com.keybord.theme.BuiltInThemes
 import com.keybord.theme.ThemeModel
 import com.keybord.theme.ThemeRepository
+import com.keybord.voice.MicPermissionActivity
+import com.keybord.voice.VoiceRamblerManager
 
 /**
  * Master InputMethodService for Keybord.
- * Unifies Unlimited Clipboard, Visual Customization, Glide Typing,
- * and Adaptive Vocabulary Learning with <30ms latency.
+ * Unifies Unlimited Clipboard, Visual Customization, SHARK2 Glide Typing,
+ * Adaptive Vocabulary + Personal Dictionary Sync, Voice Rambler Dictation,
+ * and Magic Writer Proofread & Tone Rewriting.
  */
 class KeybordIME : InputMethodService() {
 
@@ -39,6 +54,9 @@ class KeybordIME : InputMethodService() {
     private lateinit var clipboardManager: KeybordClipboardManager
     private lateinit var themeRepo: ThemeRepository
     private lateinit var profileRepo: AppProfileRepository
+    private val magicCoordinator = MagicWritingCoordinator()
+    private lateinit var ramblerController: RamblerController
+    private lateinit var voiceRamblerManager: VoiceRamblerManager
 
     // Views
     private lateinit var rootContainer: LinearLayout
@@ -49,21 +67,25 @@ class KeybordIME : InputMethodService() {
     private lateinit var popPreviewView: KeyPopPreviewView
     private lateinit var inlineClipboardTray: InlineClipboardTrayView
 
-    // State
+    // State & Prefs
     private var activeTheme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
     private val touchPoints = mutableListOf<TouchPoint>()
     private val recentContextWords = mutableListOf<String>()
     private var currentWordPrefix = StringBuilder()
     private var lastSpaceTapTime = 0L
     private var isGlideTypingEnabled = true
+    private var isAutoCorrectEnabled = true
     private var isAutoCapitaliseEnabled = true
     private var isDoubleSpacePeriodEnabled = true
+    private var currentEditorInfo: EditorInfo? = null
 
-    // Track for manual correction and glide alternatives
+    // Track for manual correction, smart punctuation spacing, and glide alternatives
     private var lastCommittedWord: String? = null
     private var wasLastCommittedFromSuggestion = false
     private var lastGlideCommittedWord: String? = null
+    private var autoInsertedSpaceBeforePunctuation = false
     private var isSwipeSession = false
+    private var pendingMicAfterPermission = false
 
     // Swipe-to-delete state
     private var swipeUseSelectionHighlight = false
@@ -72,23 +94,111 @@ class KeybordIME : InputMethodService() {
     private var lastSwipeWordCount = 0
     private val swipeDeletedChunks = mutableListOf<String>()
 
+    private val micPermissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val granted = intent?.getBooleanExtra(MicPermissionActivity.EXTRA_GRANTED, false) == true
+            val shouldStart = pendingMicAfterPermission
+            pendingMicAfterPermission = false
+            if (granted && shouldStart) {
+                startVoiceRamblerDictation()
+            } else if (!granted) {
+                if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.showRamblerMessage("Microphone permission denied")
+                }
+            }
+        }
+    }
+    private var isMicReceiverRegistered = false
+
     override fun onCreate() {
         super.onCreate()
         configureImeWindow()
+        loadTypingPreferences()
 
-        // 1. Initialize Lexicon (assets/wordlist.txt + starter fallback) & Glide Engine
+        // 1. Initialize Lexicon (assets/wordlist.txt + starter fallback) & SHARK2 Glide Engine
         lexicon = TrieLexicon().apply {
             loadFromAssets(this@KeybordIME)
         }
         glideDecoder = GlideDecoder(emptyMap(), lexicon)
 
-        // 2. Initialize Adaptive Vocabulary Engine
+        // 2. Initialize Adaptive Vocabulary Engine & sync personal words into Glide Lexicon
         vocabEngine = AdaptiveVocabularyEngine(
             context = this,
             staticWordLookup = { word -> lexicon.contains(word) }
         )
+        syncUserVocabularyIntoLexicon()
 
-        // 3. Initialize Clipboard Manager
+        // 3. Initialize Voice Rambler Controller & SpeechRecognizer Manager
+        ramblerController = RamblerController()
+        ramblerController.undoStateMachine.listener = object : RamblerUndoStateMachine.UndoStateListener {
+            override fun onChunkStateChanged(chunk: TextChunk, newState: ChunkState) {
+                if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.showRamblerRevertState(newState == ChunkState.RAW_TRANSCRIPT)
+                }
+            }
+
+            override fun onSessionReset(reason: String) {
+                if (::suggestionStripView.isInitialized && !voiceRamblerManager.isListening) {
+                    suggestionStripView.hideRamblerBar()
+                }
+            }
+        }
+        voiceRamblerManager = VoiceRamblerManager(
+            context = this,
+            onReady = {
+                if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.showRamblerListeningState()
+                }
+            },
+            onPartialSpeech = { partial ->
+                ramblerController.onCumulativeHypothesisReceived(partial, isFinal = false)
+                if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.showRamblerStreamingPreview(partial)
+                }
+            },
+            onFinalSpeech = { finalText ->
+                val chunk = ramblerController.onCumulativeHypothesisReceived(finalText, isFinal = true)
+                if (chunk != null) {
+                    vocabEngine.onWordCommitted(
+                        chunk.cleanedText.split(Regex("\\s+")).lastOrNull().orEmpty(),
+                        recentContextWords,
+                        LearningEvent.NORMAL_TYPING
+                    )
+                    if (::suggestionStripView.isInitialized) {
+                        suggestionStripView.showRamblerRevertState(isShowingRaw = false)
+                    }
+                } else if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.hideRamblerBar()
+                }
+                updateAutoCapShiftState()
+            },
+            onError = { message, needsPermission ->
+                ramblerController.cancelStreaming()
+                if (needsPermission) {
+                    pendingMicAfterPermission = true
+                }
+                if (::suggestionStripView.isInitialized) {
+                    suggestionStripView.showRamblerMessage(message)
+                }
+            },
+            onStateChanged = { listening ->
+                if (!listening && ::suggestionStripView.isInitialized &&
+                    !ramblerController.hasActiveToggleChunk()
+                ) {
+                    // Leave status error or keep revert bar if chunk active
+                }
+            }
+        )
+
+        ContextCompat.registerReceiver(
+            this,
+            micPermissionReceiver,
+            IntentFilter(MicPermissionActivity.ACTION_MIC_PERMISSION_RESULT),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
+        isMicReceiverRegistered = true
+
+        // 4. Initialize Clipboard Manager
         clipboardManager = KeybordClipboardManager(this).apply {
             startListening()
             addChangeListener {
@@ -96,7 +206,7 @@ class KeybordIME : InputMethodService() {
             }
         }
 
-        // 4. Initialize Theme & Profile Repositories
+        // 5. Initialize Theme & Profile Repositories
         themeRepo = ThemeRepository(this).apply {
             addOnThemeChangeListener { newTheme ->
                 applyTheme(newTheme)
@@ -104,6 +214,35 @@ class KeybordIME : InputMethodService() {
         }
         activeTheme = themeRepo.getActiveTheme()
         profileRepo = AppProfileRepository(this)
+    }
+
+    private fun loadTypingPreferences() {
+        try {
+            val prefs = getSharedPreferences("keybord_typing_prefs", MODE_PRIVATE)
+            isGlideTypingEnabled = prefs.getBoolean("glide_typing", true)
+            isAutoCorrectEnabled = prefs.getBoolean("auto_correct", true)
+            isAutoCapitaliseEnabled = prefs.getBoolean("auto_capitalise", true)
+            isDoubleSpacePeriodEnabled = prefs.getBoolean("double_space_period", true)
+        } catch (_: Exception) {
+            isGlideTypingEnabled = true
+            isAutoCorrectEnabled = true
+            isAutoCapitaliseEnabled = true
+            isDoubleSpacePeriodEnabled = true
+        }
+    }
+
+    private fun syncUserVocabularyIntoLexicon() {
+        try {
+            vocabEngine.personalDictionary.syncFromSystem(contentResolver)
+            for (entry in vocabEngine.personalDictionary.getAllPersonalWords()) {
+                lexicon.insert(entry.word, maxOf(entry.count.toFloat(), 900f))
+            }
+            for (entry in vocabEngine.storage.getKnownWords(350)) {
+                lexicon.insert(entry.word, maxOf(650f, entry.count * 25f))
+            }
+        } catch (_: Exception) {
+            // Safe fallback if storage/provider unavailable
+        }
     }
 
     private fun applyBottomWindowConfig(win: Window) {
@@ -138,12 +277,20 @@ class KeybordIME : InputMethodService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (isMicReceiverRegistered) {
+            try {
+                unregisterReceiver(micPermissionReceiver)
+            } catch (_: Exception) {
+                // Already unregistered
+            }
+            isMicReceiverRegistered = false
+        }
+        ramblerController.finishStreaming()
+        voiceRamblerManager.destroy()
         clipboardManager.stopListening()
     }
 
     override fun onCreateInputView(): View {
-        val dp = resources.displayMetrics.density
-
         rootContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.BOTTOM
@@ -154,7 +301,7 @@ class KeybordIME : InputMethodService() {
             )
         }
 
-        // 1. Suggestion Strip
+        // 1. Enhanced Suggestion Strip (Clipboard, Magic Writer ✨, Candidates, Mic 🎙, Settings)
         suggestionStripView = SuggestionStripView(this).apply {
             theme = activeTheme
             onCandidateSelected = { word ->
@@ -176,6 +323,26 @@ class KeybordIME : InputMethodService() {
             onRecentClipDismissed = { id ->
                 clipboardManager.dismissRecentItem(id)
                 updateRecentClipsInStrip()
+            }
+            onMagicProofreadClicked = {
+                performMagicProofread()
+            }
+            onMagicStyleClicked = { style ->
+                performMagicRewrite(style)
+            }
+            onMagicUndoClicked = {
+                performMagicUndo()
+            }
+            onMicClicked = {
+                onMicButtonPressed()
+            }
+            onRamblerStopClicked = {
+                voiceRamblerManager.stopListening()
+            }
+            onRamblerToggleRawClicked = {
+                if (ramblerController.toggleTranscriptRevert()) {
+                    showRamblerRevertState(ramblerController.isShowingRawTranscript())
+                }
             }
         }
         rootContainer.addView(suggestionStripView)
@@ -213,6 +380,9 @@ class KeybordIME : InputMethodService() {
             onDeleteSwipeFinish = { commitDelete ->
                 finishSwipeDeleteSession(commitDelete)
             }
+            onSpaceSwipeCursorStep = { deltaSteps ->
+                moveCursorBySteps(deltaSteps)
+            }
             onKeyPositionsChanged = { positions ->
                 glideDecoder.updateKeyPositions(positions)
             }
@@ -247,7 +417,6 @@ class KeybordIME : InputMethodService() {
                 ViewGroup.LayoutParams.WRAP_CONTENT
             )
         }
-        rootContainer.addView(keyboardFrame)
         rootContainer.addView(inlineClipboardTray)
 
         // Intercept Touch for Glide Typing
@@ -262,6 +431,10 @@ class KeybordIME : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        currentEditorInfo = info
+        loadTypingPreferences()
+        syncUserVocabularyIntoLexicon()
+
         (rootContainer.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
             if (lp.gravity != Gravity.BOTTOM) {
                 lp.gravity = Gravity.BOTTOM
@@ -279,10 +452,19 @@ class KeybordIME : InputMethodService() {
         currentWordPrefix.clear()
         recentContextWords.clear()
         lastGlideCommittedWord = null
+        autoInsertedSpaceBeforePunctuation = false
         isSwipeSession = false
         touchPoints.clear()
 
-        // 1. Check Per-App Profiles (Feature 5)
+        ramblerController.attachInputConnection(currentInputConnection)
+        if (::suggestionStripView.isInitialized) {
+            suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
+            if (!voiceRamblerManager.isListening && !ramblerController.hasActiveToggleChunk()) {
+                suggestionStripView.hideRamblerBar()
+            }
+        }
+
+        // 1. Check Per-App Profiles
         val profile = profileRepo.getProfileForPackage(info.packageName)
         val targetTheme = if (profile?.themeIdOverride != null) {
             themeRepo.getThemeById(profile.themeIdOverride) ?: themeRepo.getActiveTheme()
@@ -294,15 +476,49 @@ class KeybordIME : InputMethodService() {
         // 2. Sensitive content detection (password fields)
         clipboardManager.updateCurrentEditorInfo(info)
 
-        // 3. Check cursor context
-        val textBefore = currentInputConnection?.getTextBeforeCursor(40, 0)?.toString() ?: ""
-        val tokens = textBefore.trim().split(Regex("\\s+"))
-        if (tokens.isNotEmpty() && tokens.last().isNotBlank()) {
+        // 3. Check cursor context & auto-capitalisation
+        val textBefore = try {
+            currentInputConnection?.getTextBeforeCursor(40, 0)?.toString() ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+        val tokens = textBefore.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+        if (tokens.isNotEmpty()) {
             recentContextWords.addAll(tokens.takeLast(3))
         }
+        currentInputConnection?.let { syncWordPrefixFromCursor(it) }
+        updateAutoCapShiftState()
 
         refreshPredictions()
         updateRecentClipsInStrip()
+    }
+
+    override fun onFinishInputView(finishingInput: Boolean) {
+        super.onFinishInputView(finishingInput)
+        if (voiceRamblerManager.isListening) {
+            voiceRamblerManager.stopListening()
+        }
+        ramblerController.finishStreaming()
+        ramblerController.attachInputConnection(null)
+    }
+
+    override fun onUpdateSelection(
+        oldSelStart: Int,
+        oldSelEnd: Int,
+        newSelStart: Int,
+        newSelEnd: Int,
+        candidatesStart: Int,
+        candidatesEnd: Int
+    ) {
+        super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
+        ramblerController.undoStateMachine.handleTextMutation(newSelEnd)
+        if (::suggestionStripView.isInitialized &&
+            !voiceRamblerManager.isListening &&
+            !ramblerController.hasActiveToggleChunk() &&
+            ramblerController.undoStateMachine.sessionState == RamblerSessionState.IDLE
+        ) {
+            suggestionStripView.hideRamblerBar()
+        }
     }
 
     private fun handleKeyboardTouch(event: MotionEvent): Boolean {
@@ -317,7 +533,7 @@ class KeybordIME : InputMethodService() {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchPoints.clear()
-                isSwipeSession = keyboardView.isAlphabeticKeyAt(x, y)
+                isSwipeSession = keyboardView.isInAlphabeticGlideZone(x, y)
                 if (isSwipeSession) {
                     touchPoints.add(TouchPoint(x, y, now, event.pressure))
                     gestureOverlayView.addPoint(x, y)
@@ -415,19 +631,28 @@ class KeybordIME : InputMethodService() {
     private fun onGlideCandidates(candidates: List<GlideCandidate>) {
         val ic = currentInputConnection ?: return
         val topWord = candidates.first().word
-        val committedWord = if (keyboardView.shiftState != KeyboardView.ShiftState.OFF) {
-            if (keyboardView.shiftState == KeyboardView.ShiftState.CAPS_LOCK) {
-                topWord.uppercase()
-            } else {
+        val committedWord = when (keyboardView.shiftState) {
+            KeyboardView.ShiftState.CAPS_LOCK -> topWord.uppercase()
+            KeyboardView.ShiftState.SHIFTED -> {
                 keyboardView.shiftState = KeyboardView.ShiftState.OFF
                 topWord.replaceFirstChar { it.uppercase() }
             }
+            KeyboardView.ShiftState.OFF -> topWord
+        }
+
+        val before = try { ic.getTextBeforeCursor(4, 0)?.toString() ?: "" } catch (_: Exception) { "" }
+        val leadingSpace = if (
+            before.isNotEmpty() &&
+            !before.last().isWhitespace() &&
+            before.last() !in charArrayOf('(', '[', '{', '"', '\'', '\n', '/')
+        ) {
+            " "
         } else {
-            topWord
+            ""
         }
 
         ic.beginBatchEdit()
-        ic.commitText("$committedWord ", 1)
+        ic.commitText("$leadingSpace$committedWord ", 1)
         ic.endBatchEdit()
 
         vocabEngine.onWordCommitted(committedWord, recentContextWords, LearningEvent.NORMAL_TYPING)
@@ -436,7 +661,9 @@ class KeybordIME : InputMethodService() {
 
         lastCommittedWord = committedWord
         lastGlideCommittedWord = committedWord
+        autoInsertedSpaceBeforePunctuation = true
         wasLastCommittedFromSuggestion = false
+        lastSpaceTapTime = 0L
 
         val alternatives = if (candidates.size > 1) {
             candidates.drop(1).map { it.word }
@@ -444,11 +671,18 @@ class KeybordIME : InputMethodService() {
             listOf(committedWord)
         }
         suggestionStripView.setCandidates(alternatives)
+        updateAutoCapShiftState()
     }
 
     private fun handleKeyTap(key: String) {
         val ic = currentInputConnection ?: return
+        val prevGlideWord = lastGlideCommittedWord
+        val hadAutoSpace = autoInsertedSpaceBeforePunctuation
         lastGlideCommittedWord = null
+        autoInsertedSpaceBeforePunctuation = false
+        if (key != " ") {
+            lastSpaceTapTime = 0L
+        }
 
         when (key) {
             "⌫" -> deleteSingleCharOrSelection()
@@ -475,8 +709,45 @@ class KeybordIME : InputMethodService() {
 
             " " -> {
                 val now = System.currentTimeMillis()
-                if (isDoubleSpacePeriodEnabled && now - lastSpaceTapTime < 400L) {
-                    // Double space period
+                val rawPrefix = currentWordPrefix.toString()
+
+                if (rawPrefix.isNotEmpty()) {
+                    val expandedShortcut = vocabEngine.personalDictionary.getShortcutExpansion(rawPrefix)
+                    if (expandedShortcut != null && expandedShortcut != rawPrefix) {
+                        ic.beginBatchEdit()
+                        ic.deleteSurroundingText(rawPrefix.length, 0)
+                        ic.commitText("$expandedShortcut ", 1)
+                        ic.endBatchEdit()
+                        vocabEngine.onWordCommitted(expandedShortcut, recentContextWords, LearningEvent.NORMAL_TYPING)
+                        addContextWord(expandedShortcut)
+                        currentWordPrefix.clear()
+                        lastSpaceTapTime = now
+                        updateAutoCapShiftState()
+                        refreshPredictions()
+                        return
+                    } else if (isAutoCorrectEnabled && rawPrefix == "i") {
+                        ic.beginBatchEdit()
+                        ic.deleteSurroundingText(1, 0)
+                        ic.commitText("I ", 1)
+                        ic.endBatchEdit()
+                        vocabEngine.onWordCommitted("I", recentContextWords, LearningEvent.NORMAL_TYPING)
+                        addContextWord("I")
+                        currentWordPrefix.clear()
+                        lastSpaceTapTime = now
+                        updateAutoCapShiftState()
+                        refreshPredictions()
+                        return
+                    }
+                }
+
+                val before = try { ic.getTextBeforeCursor(4, 0)?.toString() ?: "" } catch (_: Exception) { "" }
+                val canInsertPeriod = isDoubleSpacePeriodEnabled &&
+                    now - lastSpaceTapTime < 400L &&
+                    before.endsWith(" ") &&
+                    before.length >= 2 &&
+                    !before[before.length - 2].isWhitespace()
+
+                if (canInsertPeriod) {
                     ic.deleteSurroundingText(1, 0)
                     ic.commitText(". ", 1)
                     lastSpaceTapTime = 0L
@@ -492,19 +763,56 @@ class KeybordIME : InputMethodService() {
                     currentWordPrefix.clear()
                 }
 
+                updateAutoCapShiftState()
                 refreshPredictions()
             }
 
             "Enter" -> {
-                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_DOWN, android.view.KeyEvent.KEYCODE_ENTER))
-                ic.sendKeyEvent(android.view.KeyEvent(android.view.KeyEvent.ACTION_UP, android.view.KeyEvent.KEYCODE_ENTER))
+                if (isAutoCorrectEnabled && currentWordPrefix.toString() == "i") {
+                    ic.beginBatchEdit()
+                    ic.deleteSurroundingText(1, 0)
+                    ic.commitText("I", 1)
+                    ic.endBatchEdit()
+                }
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
                 currentWordPrefix.clear()
                 recentContextWords.clear()
+                updateAutoCapShiftState()
+                refreshPredictions()
+            }
+
+            ".", ",", "!", "?", ";", ":" -> {
+                val before = try { ic.getTextBeforeCursor(4, 0)?.toString() ?: "" } catch (_: Exception) { "" }
+                ic.beginBatchEdit()
+                try {
+                    if (isAutoCorrectEnabled && currentWordPrefix.toString() == "i") {
+                        ic.deleteSurroundingText(1, 0)
+                        ic.commitText("I$key ", 1)
+                        vocabEngine.onWordCommitted("I", recentContextWords, LearningEvent.NORMAL_TYPING)
+                        addContextWord("I")
+                        currentWordPrefix.clear()
+                    } else if ((hadAutoSpace || prevGlideWord != null) && before.endsWith(" ")) {
+                        ic.deleteSurroundingText(1, 0)
+                        ic.commitText("$key ", 1)
+                    } else {
+                        ic.commitText(key, 1)
+                        if (currentWordPrefix.isNotEmpty()) {
+                            addContextWord(currentWordPrefix.toString())
+                            currentWordPrefix.clear()
+                        }
+                    }
+                } finally {
+                    ic.endBatchEdit()
+                }
+                if (keyboardView.shiftState == KeyboardView.ShiftState.SHIFTED) {
+                    keyboardView.shiftState = KeyboardView.ShiftState.OFF
+                }
+                updateAutoCapShiftState()
                 refreshPredictions()
             }
 
             else -> {
-                // Regular character
                 val charToCommit = if (keyboardView.shiftState != KeyboardView.ShiftState.OFF && key.length == 1) {
                     key.uppercase()
                 } else {
@@ -513,7 +821,7 @@ class KeybordIME : InputMethodService() {
 
                 ic.commitText(charToCommit, 1)
 
-                if (charToCommit.length == 1 && charToCommit[0].isLetter()) {
+                if (charToCommit.length == 1 && (charToCommit[0].isLetter() || charToCommit[0] == '\'')) {
                     currentWordPrefix.append(charToCommit)
                 } else {
                     if (currentWordPrefix.isNotEmpty()) {
@@ -522,7 +830,6 @@ class KeybordIME : InputMethodService() {
                     }
                 }
 
-                // Auto reset shift if not caps lock
                 if (keyboardView.shiftState == KeyboardView.ShiftState.SHIFTED) {
                     keyboardView.shiftState = KeyboardView.ShiftState.OFF
                 }
@@ -532,14 +839,153 @@ class KeybordIME : InputMethodService() {
         }
     }
 
+    private fun updateAutoCapShiftState() {
+        if (!isAutoCapitaliseEnabled || !::keyboardView.isInitialized) return
+        if (keyboardView.shiftState == KeyboardView.ShiftState.CAPS_LOCK) return
+
+        val info = currentEditorInfo ?: return
+        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
+        if (inputClass != InputType.TYPE_CLASS_TEXT) return
+
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        if (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD ||
+            variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_URI
+        ) {
+            return
+        }
+
+        if ((info.inputType and InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS) != 0) {
+            keyboardView.shiftState = KeyboardView.ShiftState.CAPS_LOCK
+            return
+        }
+
+        val ic = currentInputConnection ?: return
+        val capsMode = try { ic.getCursorCapsMode(info.inputType) } catch (_: Exception) { 0 }
+        val before = try { ic.getTextBeforeCursor(48, 0)?.toString() ?: "" } catch (_: Exception) { "" }
+
+        val sentenceStart = capsMode != 0 ||
+            before.isEmpty() ||
+            before.endsWith("\n") ||
+            Regex(".*[.!?][\"')\\]]*\\s+$").matches(before)
+
+        keyboardView.shiftState = if (sentenceStart && currentWordPrefix.isEmpty()) {
+            KeyboardView.ShiftState.SHIFTED
+        } else if (!sentenceStart && currentWordPrefix.isNotEmpty() && keyboardView.shiftState == KeyboardView.ShiftState.SHIFTED) {
+            KeyboardView.ShiftState.OFF
+        } else {
+            keyboardView.shiftState
+        }
+    }
+
+    private fun moveCursorBySteps(deltaSteps: Int) {
+        val ic = currentInputConnection ?: return
+        if (deltaSteps == 0) return
+        val keyCode = if (deltaSteps < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
+        val count = kotlin.math.abs(deltaSteps).coerceAtMost(8)
+        for (i in 0 until count) {
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        }
+        syncWordPrefixFromCursor(ic)
+        refreshPredictions()
+    }
+
+    private fun onMicButtonPressed() {
+        if (voiceRamblerManager.isListening) {
+            voiceRamblerManager.stopListening()
+            return
+        }
+        if (!voiceRamblerManager.hasAudioPermission()) {
+            pendingMicAfterPermission = true
+            voiceRamblerManager.requestAudioPermission()
+            return
+        }
+        startVoiceRamblerDictation()
+    }
+
+    private fun startVoiceRamblerDictation() {
+        val ic = currentInputConnection
+        ramblerController.attachInputConnection(ic)
+        val initialOffset = getCurrentCursorOffset(ic)
+        ramblerController.startSession(initialOffset)
+        suggestionStripView.showRamblerListeningState()
+        voiceRamblerManager.startListening()
+    }
+
+    private fun getCurrentCursorOffset(ic: InputConnection?): Int {
+        if (ic == null) return 0
+        val ext = try { ic.getExtractedText(ExtractedTextRequest(), 0) } catch (_: Exception) { null }
+        if (ext != null && ext.selectionEnd >= 0) {
+            return ext.selectionEnd
+        }
+        return try { ic.getTextBeforeCursor(1024, 0)?.length ?: 0 } catch (_: Exception) { 0 }
+    }
+
+    private fun resolveMagicTarget(ic: InputConnection): Pair<String, Boolean>? {
+        val selected = try { ic.getSelectedText(0)?.toString() } catch (_: Exception) { null }
+        if (!selected.isNullOrBlank()) {
+            return selected to true
+        }
+        val before = try { ic.getTextBeforeCursor(400, 0)?.toString() } catch (_: Exception) { null }
+        val draft = before?.substringAfterLast('\n')?.trimStart().orEmpty()
+        if (draft.isBlank()) {
+            Toast.makeText(this, "Type or select text to transform", Toast.LENGTH_SHORT).show()
+            return null
+        }
+        return draft to false
+    }
+
+    private fun performMagicProofread() {
+        val ic = currentInputConnection ?: return
+        val (target, hadSelection) = resolveMagicTarget(ic) ?: return
+        val result = magicCoordinator.proofread(target)
+        if (!result.hasChanges || result.correctedText == target) {
+            Toast.makeText(this, "Looks clean — no issues found", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (magicCoordinator.applyReplacement(ic, target, result.correctedText, hadSelection)) {
+            currentWordPrefix.clear()
+            autoInsertedSpaceBeforePunctuation = false
+            suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
+        }
+    }
+
+    private fun performMagicRewrite(style: WritingStyle) {
+        val ic = currentInputConnection ?: return
+        val (target, hadSelection) = resolveMagicTarget(ic) ?: return
+        val draft = magicCoordinator.rewriteInStyle(target, style)
+        if (draft.text.isNotBlank() && draft.text != target) {
+            if (magicCoordinator.applyReplacement(ic, target, draft.text, hadSelection)) {
+                currentWordPrefix.clear()
+                autoInsertedSpaceBeforePunctuation = false
+                suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
+            }
+        }
+    }
+
+    private fun performMagicUndo() {
+        val ic = currentInputConnection ?: return
+        if (magicCoordinator.revertLastChange(ic)) {
+            suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
+            syncWordPrefixFromCursor(ic)
+            refreshPredictions()
+        }
+    }
+
     private fun deleteSingleCharOrSelection() {
         val ic = currentInputConnection ?: return
         lastGlideCommittedWord = null
+        autoInsertedSpaceBeforePunctuation = false
 
         val selected = try { ic.getSelectedText(0) } catch (_: Exception) { null }
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
             syncWordPrefixFromCursor(ic)
+            updateAutoCapShiftState()
             refreshPredictions()
             return
         }
@@ -554,17 +1000,20 @@ class KeybordIME : InputMethodService() {
         val delCount = DeleteWordHelper.computeSingleCharDeleteCount(before)
         ic.deleteSurroundingText(delCount, 0)
         syncWordPrefixFromCursor(ic)
+        updateAutoCapShiftState()
         refreshPredictions()
     }
 
     private fun deleteOneWordBeforeCursor() {
         val ic = currentInputConnection ?: return
         lastGlideCommittedWord = null
+        autoInsertedSpaceBeforePunctuation = false
 
         val selected = try { ic.getSelectedText(0) } catch (_: Exception) { null }
         if (!selected.isNullOrEmpty()) {
             ic.commitText("", 1)
             syncWordPrefixFromCursor(ic)
+            updateAutoCapShiftState()
             refreshPredictions()
             return
         }
@@ -575,12 +1024,14 @@ class KeybordIME : InputMethodService() {
             ic.deleteSurroundingText(delLen, 0)
         }
         syncWordPrefixFromCursor(ic)
+        updateAutoCapShiftState()
         refreshPredictions()
     }
 
     private fun beginSwipeDeleteSession() {
         val ic = currentInputConnection ?: return
         lastGlideCommittedWord = null
+        autoInsertedSpaceBeforePunctuation = false
         swipeDeletedChunks.clear()
         swipeWordBoundaries = IntArray(0)
         swipeUseSelectionHighlight = false
@@ -647,6 +1098,7 @@ class KeybordIME : InputMethodService() {
                 }
             }
             syncWordPrefixFromCursor(ic)
+            updateAutoCapShiftState()
             refreshPredictions()
         }
         swipeUseSelectionHighlight = false
@@ -659,7 +1111,7 @@ class KeybordIME : InputMethodService() {
         currentWordPrefix.clear()
         val before = try { ic.getTextBeforeCursor(32, 0) } catch (_: Exception) { null } ?: return
         var i = before.length
-        while (i > 0 && before[i - 1].isLetter()) {
+        while (i > 0 && (before[i - 1].isLetter() || before[i - 1] == '\'')) {
             i--
         }
         if (i < before.length) {
@@ -678,6 +1130,7 @@ class KeybordIME : InputMethodService() {
         currentWordPrefix.clear()
 
         lastCommittedWord = word
+        autoInsertedSpaceBeforePunctuation = true
         wasLastCommittedFromSuggestion = (event == LearningEvent.SUGGESTION_ACCEPTED)
     }
 
@@ -690,7 +1143,8 @@ class KeybordIME : InputMethodService() {
             ic.deleteSurroundingText(prevGlide.length + 1, 0)
             ic.commitText("$selectedWord ", 1)
             ic.endBatchEdit()
-            lastGlideCommittedWord = null
+            lastGlideCommittedWord = selectedWord
+            autoInsertedSpaceBeforePunctuation = true
             vocabEngine.onManualCorrection(prevGlide, selectedWord, recentContextWords)
             if (recentContextWords.isNotEmpty() && recentContextWords.last() == prevGlide) {
                 recentContextWords[recentContextWords.lastIndex] = selectedWord
@@ -699,6 +1153,7 @@ class KeybordIME : InputMethodService() {
             }
             lastCommittedWord = selectedWord
             wasLastCommittedFromSuggestion = true
+            updateAutoCapShiftState()
             refreshPredictions()
             return
         }
@@ -710,6 +1165,7 @@ class KeybordIME : InputMethodService() {
         }
 
         commitWordWithSpace(selectedWord, LearningEvent.SUGGESTION_ACCEPTED)
+        updateAutoCapShiftState()
         refreshPredictions()
     }
 

@@ -111,16 +111,16 @@ impl Default for GlideEngineConfig {
     fn default() -> Self {
         Self {
             min_distance_dp: 24.0,
-            min_duration_ms: 60,
-            min_tap_interval_ms: 40,
+            min_duration_ms: 30,
+            min_tap_interval_ms: 15,
             resample_point_count: 40,
             spatial_sigma_x_dp: 22.0,
             spatial_sigma_y_dp: 16.0,
-            anchor_radius_dp: 36.0,
+            anchor_radius_dp: 46.0,
             min_beam_width: 30,
             max_beam_width: 80,
-            spatial_weight: 0.65,
-            lm_weight: 0.35,
+            spatial_weight: 0.72,
+            lm_weight: 0.28,
             velocity_tolerance_factor: 1.5,
         }
     }
@@ -146,10 +146,22 @@ impl TrieNode {
     }
 }
 
+fn canonicalize_display_word(clean: &str) -> String {
+    match clean {
+        "i" => "I".to_string(),
+        "i'm" => "I'm".to_string(),
+        "i've" => "I've".to_string(),
+        "i'll" => "I'll".to_string(),
+        "i'd" => "I'd".to_string(),
+        _ => clean.to_string(),
+    }
+}
+
 pub struct TrieLexicon {
     pub root: TrieNode,
     pub word_count: usize,
     pub max_frequency: f32,
+    pub endpoint_buckets: HashMap<(char, char), Vec<(String, Vec<char>, f32)>>,
 }
 
 impl TrieLexicon {
@@ -158,6 +170,7 @@ impl TrieLexicon {
             root: TrieNode::new(),
             word_count: 0,
             max_frequency: 1000.0,
+            endpoint_buckets: HashMap::new(),
         }
     }
 
@@ -167,23 +180,51 @@ impl TrieLexicon {
             return;
         }
 
+        // Index path over alphabetic key characters so apostrophe contractions are swipeable
+        let key_chars: Vec<char> = clean.chars().filter(|c| c.is_ascii_alphabetic()).collect();
+        if key_chars.is_empty() {
+            return;
+        }
+        let display = canonicalize_display_word(&clean);
+
         self.root.max_subtree_freq = self.root.max_subtree_freq.max(frequency);
         let mut current = &mut self.root;
-        for ch in clean.chars() {
+        for &ch in &key_chars {
             current = current.children.entry(ch).or_insert_with(TrieNode::new);
             current.max_subtree_freq = current.max_subtree_freq.max(frequency);
         }
-        if !current.is_word {
+        let is_new = !current.is_word;
+        if is_new {
             self.word_count += 1;
+        }
+        if key_chars.len() >= 2 {
+            let first = key_chars[0];
+            let last = *key_chars.last().unwrap();
+            let mut dedup = Vec::with_capacity(key_chars.len());
+            for &ch in &key_chars {
+                if dedup.last().copied() != Some(ch) {
+                    dedup.push(ch);
+                }
+            }
+            if dedup.len() >= 2 {
+                let bucket = self.endpoint_buckets.entry((first, last)).or_default();
+                if let Some(existing) = bucket.iter_mut().find(|(w, _, _)| w == &display) {
+                    existing.2 = existing.2.max(frequency);
+                } else {
+                    bucket.push((display.clone(), dedup, frequency));
+                }
+            }
         }
         current.is_word = true;
         current.frequency = current.frequency.max(frequency);
         self.max_frequency = self.max_frequency.max(current.frequency);
-        current.word = Some(clean);
+        if is_new || frequency >= current.frequency {
+            current.word = Some(display);
+        }
     }
 
     pub fn contains(&self, word: &str) -> bool {
-        let clean = word.trim().to_lowercase();
+        let clean: String = word.trim().to_lowercase().chars().filter(|c| c.is_ascii_alphabetic()).collect();
         let mut current = &self.root;
         for ch in clean.chars() {
             match current.children.get(&ch) {
@@ -195,7 +236,7 @@ impl TrieLexicon {
     }
 
     pub fn get_frequency(&self, word: &str) -> f32 {
-        let clean = word.trim().to_lowercase();
+        let clean: String = word.trim().to_lowercase().chars().filter(|c| c.is_ascii_alphabetic()).collect();
         let mut current = &self.root;
         for ch in clean.chars() {
             match current.children.get(&ch) {
@@ -552,6 +593,93 @@ impl<'a> SpatialModel<'a> {
         (-normalized_cost).exp()
     }
 
+    pub fn align_shark2_dual_channel(
+        &self,
+        dedup_chars: &[char],
+        u_pts: &[(f32, f32)],
+        u_norm: &[(f32, f32)],
+        u_tan: &[(f32, f32)],
+        average_velocity: f32,
+    ) -> (f32, f32) {
+        const SAMPLE_N: usize = 24;
+        if dedup_chars.len() < 2 || u_pts.len() != SAMPLE_N {
+            return (0.0, 0.0);
+        }
+
+        let mut centers: Vec<(f32, f32)> = Vec::with_capacity(dedup_chars.len());
+        for &ch in dedup_chars {
+            match self.key_positions.get(&ch) {
+                Some(k) => centers.push((k.center_x, k.center_y)),
+                None => return (0.0, 0.0),
+            }
+        }
+
+        // Interior corner rounding (~26% pull toward chord midpoint) balances sharp and curved thumbs
+        let mut smoothed_anchors = centers.clone();
+        if smoothed_anchors.len() >= 3 {
+            for i in 1..(smoothed_anchors.len() - 1) {
+                smoothed_anchors[i].0 =
+                    0.74 * centers[i].0 + 0.13 * centers[i - 1].0 + 0.13 * centers[i + 1].0;
+                smoothed_anchors[i].1 =
+                    0.74 * centers[i].1 + 0.13 * centers[i - 1].1 + 0.13 * centers[i + 1].1;
+            }
+        }
+
+        let mut t_arc = 0.0f32;
+        for w in smoothed_anchors.windows(2) {
+            let dx = w[1].0 - w[0].0;
+            let dy = w[1].1 - w[0].1;
+            t_arc += (dx * dx + dy * dy).sqrt();
+        }
+
+        let t_pts = resample_xy_points(&smoothed_anchors, SAMPLE_N);
+        let key_unit = self.key_unit_px();
+        let (t_norm, t_tan) = normalize_and_tangents(&t_pts, key_unit);
+
+        let norm_vel = average_velocity / (key_unit / 100.0).max(0.5);
+        let speed_factor = 1.0 + (norm_vel * self.config.velocity_tolerance_factor * 0.10).clamp(0.0, 0.35);
+        let dpi_scale = self.dpi_scale();
+        let sx = self.config.spatial_sigma_x_dp * dpi_scale * speed_factor;
+        let sy = self.config.spatial_sigma_y_dp * dpi_scale * speed_factor;
+
+        // Banded Sakoe-Chiba DTW (band = 3) using flat stack buffers
+        const BAND: isize = 3;
+        let mut prev_row = [1e6f32; SAMPLE_N + 1];
+        let mut curr_row = [1e6f32; SAMPLE_N + 1];
+        prev_row[0] = 0.0;
+
+        for i in 1..=SAMPLE_N {
+            curr_row.fill(1e6f32);
+            let ui = i - 1;
+            let j_start = 1isize.max(i as isize - BAND) as usize;
+            let j_end = (SAMPLE_N as isize).min(i as isize + BAND) as usize;
+
+            for j in j_start..=j_end {
+                let tj = j - 1;
+                let dx = (u_pts[ui].0 - t_pts[tj].0) / sx;
+                let dy = (u_pts[ui].1 - t_pts[tj].1) / sy;
+                let loc_err = 0.5 * (dx * dx + dy * dy);
+
+                let sdx = u_norm[ui].0 - t_norm[tj].0;
+                let sdy = u_norm[ui].1 - t_norm[tj].1;
+                let shape_err = (sdx * sdx + sdy * sdy) * 3.0;
+
+                let dot = (u_tan[ui].0 * t_tan[tj].0 + u_tan[ui].1 * t_tan[tj].1).clamp(-1.0, 1.0);
+                let dir_err = (1.0 - dot) * 0.55;
+
+                let step_cost = 0.48 * loc_err + 0.34 * shape_err + 0.18 * dir_err;
+                let diag = prev_row[j - 1];
+                let up = prev_row[j] + 0.04;
+                let left = curr_row[j - 1] + 0.04;
+                curr_row[j] = diag.min(up).min(left) + step_cost;
+            }
+            prev_row.copy_from_slice(&curr_row);
+        }
+
+        let avg_cost = prev_row[SAMPLE_N] / SAMPLE_N as f32;
+        ((-avg_cost).exp(), t_arc)
+    }
+
     pub fn find_proximity_keys(&self, point: &TouchPoint, max_radius_px: f32) -> Vec<char> {
         let mut candidates = Vec::new();
         for (&ch, key) in self.key_positions {
@@ -565,6 +693,85 @@ impl<'a> SpatialModel<'a> {
         candidates.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
         candidates.into_iter().map(|(ch, _)| ch).collect()
     }
+}
+
+pub fn resample_xy_points(poly: &[(f32, f32)], target_count: usize) -> Vec<(f32, f32)> {
+    if poly.is_empty() || target_count == 0 {
+        return Vec::new();
+    }
+    if poly.len() == 1 || target_count == 1 {
+        return vec![poly[0]; target_count];
+    }
+    let mut cum = Vec::with_capacity(poly.len());
+    cum.push(0.0f32);
+    for i in 1..poly.len() {
+        let dx = poly[i].0 - poly[i - 1].0;
+        let dy = poly[i].1 - poly[i - 1].1;
+        cum.push(cum[i - 1] + (dx * dx + dy * dy).sqrt());
+    }
+    let total = *cum.last().unwrap();
+    if total <= 1e-4 {
+        return vec![poly[0]; target_count];
+    }
+    let step = total / (target_count - 1) as f32;
+    let mut out = Vec::with_capacity(target_count);
+    out.push(poly[0]);
+    let mut raw_idx = 0usize;
+    for k in 1..(target_count - 1) {
+        let target_d = k as f32 * step;
+        while raw_idx < poly.len() - 1 && cum[raw_idx + 1] < target_d {
+            raw_idx += 1;
+        }
+        let d0 = cum[raw_idx];
+        let d1 = cum[raw_idx + 1];
+        let seg = d1 - d0;
+        let t = if seg > 1e-5 { (target_d - d0) / seg } else { 0.0 };
+        out.push((
+            poly[raw_idx].0 + t * (poly[raw_idx + 1].0 - poly[raw_idx].0),
+            poly[raw_idx].1 + t * (poly[raw_idx + 1].1 - poly[raw_idx].1),
+        ));
+    }
+    out.push(*poly.last().unwrap());
+    out
+}
+
+pub fn normalize_and_tangents(pts: &[(f32, f32)], key_unit: f32) -> (Vec<(f32, f32)>, Vec<(f32, f32)>) {
+    let n = pts.len();
+    if n == 0 {
+        return (Vec::new(), Vec::new());
+    }
+    let mut mx = 0.0f32;
+    let mut my = 0.0f32;
+    for &(x, y) in pts {
+        mx += x;
+        my += y;
+    }
+    mx /= n as f32;
+    my /= n as f32;
+
+    let mut var = 0.0f32;
+    for &(x, y) in pts {
+        let dx = x - mx;
+        let dy = y - my;
+        var += dx * dx + dy * dy;
+    }
+    let rms = (var / n as f32).sqrt().max(key_unit * 0.5);
+
+    let norm: Vec<(f32, f32)> = pts.iter().map(|&(x, y)| ((x - mx) / rms, (y - my) / rms)).collect();
+    let mut tan = Vec::with_capacity(n);
+    for i in 0..n {
+        let (ax, ay) = if i == 0 { pts[0] } else { pts[i - 1] };
+        let (bx, by) = if i + 1 >= n { pts[n - 1] } else { pts[i + 1] };
+        let dx = bx - ax;
+        let dy = by - ay;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len > 1e-3 {
+            tan.push((dx / len, dy / len));
+        } else {
+            tan.push((0.0, 0.0));
+        }
+    }
+    (norm, tan)
 }
 
 pub struct TrajectoryProcessor<'a> {
@@ -790,230 +997,98 @@ impl GlideDecoder {
         let end_pt = smoothed.last().unwrap();
         let anchor_radius = spatial.anchor_radius_px();
 
-        let start_keys: Vec<char> = spatial
+        let mut start_keys: Vec<char> = spatial
             .find_proximity_keys(start_pt, anchor_radius)
             .into_iter()
             .filter(|&c| spatial.anchor_score_for_char(start_pt, c) > 0.0)
             .collect();
-        let end_keys: HashSet<char> = spatial
+        start_keys.truncate(4);
+
+        let mut end_keys: Vec<char> = spatial
             .find_proximity_keys(end_pt, anchor_radius)
             .into_iter()
             .filter(|&c| spatial.anchor_score_for_char(end_pt, c) > 0.0)
             .collect();
+        end_keys.truncate(4);
 
         if start_keys.is_empty() || end_keys.is_empty() {
             return Vec::new();
         }
 
-        let ref_arc = 400.0 * spatial.dpi_scale();
-        let dynamic_beam = (self.config.min_beam_width as f32
-            + (arc_length / ref_arc) * (self.config.max_beam_width - self.config.min_beam_width) as f32)
-            .clamp(self.config.min_beam_width as f32, self.config.max_beam_width as f32) as usize;
-
-        let sharp_corners = trajectory_corner_indices(&smoothed);
-        let corner_indices = processor.extract_corners(&smoothed, 0.5);
-        let step_size = (smoothed.len() / 20).max(1);
-        let mut sample_indices: Vec<usize> = (step_size..smoothed.len()).step_by(step_size).collect();
-        sample_indices.extend(&sharp_corners);
-        sample_indices.extend(corner_indices);
-        sample_indices.push(smoothed.len() - 1);
-        sample_indices.retain(|&idx| idx > 0 && idx < smoothed.len());
-        sample_indices.sort_unstable();
-        sample_indices.dedup();
+        const SAMPLE_N: usize = 24;
+        let raw_xy: Vec<(f32, f32)> = smoothed.iter().map(|p| (p.x, p.y)).collect();
+        let u_pts = resample_xy_points(&raw_xy, SAMPLE_N);
+        let key_unit = spatial.key_unit_px();
+        let (u_norm, u_tan) = normalize_and_tangents(&u_pts, key_unit);
 
         let max_freq_ln = (self.lexicon.max_frequency + 1.0).ln().max(1.0);
+        let r_gauss = (anchor_radius * 0.68).max(40.0);
 
-        #[derive(Clone)]
-        struct BeamNode<'a> {
-            trie_node: &'a TrieNode,
-            current_word: String,
-            cumulative_score: f32,
-            rank_score: f32,
-        }
-
-        let mut beam = Vec::new();
-        for &start_ch in &start_keys {
-            if let Some(child) = self.lexicon.root.children.get(&start_ch) {
-                let score = spatial.point_key_distance_score(start_pt, start_ch, avg_velocity);
-                let lm_prior = ((child.max_subtree_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
-                beam.push(BeamNode {
-                    trie_node: child,
-                    current_word: start_ch.to_string(),
-                    cumulative_score: score,
-                    rank_score: score + 0.12 * lm_prior,
-                });
-            }
-        }
-
-        let key_unit = spatial.key_unit_px();
-        let step_radius = key_unit * 1.15;
-        let mut collected_words = HashSet::new();
-
-        for &p_idx in &sample_indices {
-            if beam.is_empty() {
-                break;
-            }
-            let current_point = &smoothed[p_idx];
-            let candidates_near_point = spatial.find_proximity_keys(current_point, step_radius);
-            let mut next_beam = Vec::new();
-
-            for b_node in &beam {
-                for &next_ch in &candidates_near_point {
-                    if let Some(child) = b_node.trie_node.children.get(&next_ch) {
-                        let score = spatial.point_key_distance_score(current_point, next_ch, avg_velocity);
-                        if score < 0.22 {
-                            continue;
-                        }
-                        let mut w = b_node.current_word.clone();
-                        w.push(next_ch);
-                        let new_cum = b_node.cumulative_score + (score - 0.18);
-                        let lm_prior = ((child.max_subtree_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
-                        next_beam.push(BeamNode {
-                            trie_node: child,
-                            current_word: w,
-                            cumulative_score: new_cum,
-                            rank_score: new_cum + 0.12 * lm_prior,
-                        });
-                    }
-                }
-
-                if let Some(last_ch) = b_node.current_word.chars().last() {
-                    if let Some(child) = b_node.trie_node.children.get(&last_ch) {
-                        let stay_score = spatial.point_key_distance_score(current_point, last_ch, avg_velocity);
-                        if stay_score > 0.35 {
-                            let mut w = b_node.current_word.clone();
-                            w.push(last_ch);
-                            let new_cum = b_node.cumulative_score - 0.01;
-                            let lm_prior = ((child.max_subtree_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
-                            next_beam.push(BeamNode {
-                                trie_node: child,
-                                current_word: w,
-                                cumulative_score: new_cum,
-                                rank_score: new_cum + 0.12 * lm_prior,
-                            });
-                        }
-                    }
-                }
-
-                let new_cum = b_node.cumulative_score - 0.015;
-                let lm_prior = ((b_node.trie_node.max_subtree_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
-                next_beam.push(BeamNode {
-                    trie_node: b_node.trie_node,
-                    current_word: b_node.current_word.clone(),
-                    cumulative_score: new_cum,
-                    rank_score: new_cum + 0.12 * lm_prior,
-                });
-            }
-
-            next_beam.sort_by(|a, b| b.rank_score.partial_cmp(&a.rank_score).unwrap_or(std::cmp::Ordering::Equal));
-            let mut seen_words = HashSet::new();
-            beam.clear();
-            for item in next_beam {
-                if seen_words.insert(item.current_word.clone()) {
-                    beam.push(item);
-                    if beam.len() >= dynamic_beam {
-                        break;
-                    }
-                }
-            }
-        }
-
-        for b_node in &beam {
-            Self::collect_completed_words(b_node.trie_node, &end_keys, &mut collected_words, 2);
-            if b_node.trie_node.is_word {
-                if let Some(ref w) = b_node.trie_node.word {
-                    if let Some(last_c) = w.chars().last() {
-                        if end_keys.contains(&last_c) {
-                            collected_words.insert(w.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Direct 2-letter word capture from anchored start/end keys
-        for &sc in &start_keys {
-            if let Some(s_node) = self.lexicon.root.children.get(&sc) {
-                for &ec in &end_keys {
-                    if let Some(two_char) = s_node.children.get(&ec) {
-                        if two_char.is_word {
-                            if let Some(ref w) = two_char.word {
-                                collected_words.insert(w.clone());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        let expected_len = sharp_corners.len() + 2;
+        let mut seen_candidates = HashSet::new();
         let mut results = Vec::new();
 
-        for word in collected_words {
-            let char_len = word.chars().count();
-            if char_len < 2 {
-                continue;
+        for &sc in &start_keys {
+            let start_k = match self.key_positions.get(&sc) {
+                Some(k) => k,
+                None => continue,
+            };
+            let sdx = start_pt.x - start_k.center_x;
+            let sdy = start_pt.y - start_k.center_y;
+            let start_g = (-((sdx * sdx + sdy * sdy) / (2.0 * r_gauss * r_gauss))).exp();
+
+            for &ec in &end_keys {
+                let bucket = match self.lexicon.endpoint_buckets.get(&(sc, ec)) {
+                    Some(b) => b,
+                    None => continue,
+                };
+                let end_k = match self.key_positions.get(&ec) {
+                    Some(k) => k,
+                    None => continue,
+                };
+                let edx = end_pt.x - end_k.center_x;
+                let edy = end_pt.y - end_k.center_y;
+                let end_g = (-((edx * edx + edy * edy) / (2.0 * r_gauss * r_gauss))).exp();
+                let anchor_factor = 0.60 + 0.40 * (start_g * end_g).sqrt();
+
+                for (word, dedup_chars, base_freq) in bucket {
+                    if !seen_candidates.insert(word.as_str()) {
+                        continue;
+                    }
+
+                    let (spatial_score, t_arc) = spatial.align_shark2_dual_channel(
+                        dedup_chars,
+                        &u_pts,
+                        &u_norm,
+                        &u_tan,
+                        avg_velocity,
+                    );
+                    if spatial_score < 0.01 {
+                        continue;
+                    }
+
+                    let arc_ratio = (arc_length.min(t_arc) / arc_length.max(t_arc).max(1.0))
+                        .clamp(0.45, 1.0);
+                    let arc_factor = 0.88 + 0.12 * arc_ratio;
+
+                    let lm_score = ((*base_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
+
+                    // Bayesian spatial-gated LM boost breaks close spatial ties without overriding shape
+                    let geo_score = spatial_score * anchor_factor * arc_factor;
+                    let total_score = geo_score * (0.78 + 0.22 * lm_score);
+
+                    results.push(GlideCandidate {
+                        word: word.clone(),
+                        total_score,
+                        spatial_score,
+                        language_model_score: lm_score,
+                    });
+                }
             }
-
-            let anchor_start = spatial.anchor_score_for_char(start_pt, word.chars().next().unwrap());
-            let anchor_end = spatial.anchor_score_for_char(end_pt, word.chars().last().unwrap());
-            let anchor = anchor_start * anchor_end;
-            if anchor <= 0.0 {
-                continue;
-            }
-
-            let spatial_score = spatial.align_word_trajectory(&word, &smoothed, avg_velocity);
-            if spatial_score < 0.005 {
-                continue;
-            }
-
-            let dedup_chars = dedup_consecutive_chars(&word);
-            let corner_recall = spatial.corner_recall_score(&dedup_chars, &smoothed, &sharp_corners, avg_velocity);
-
-            let base_freq = self.lexicon.get_frequency(&word);
-            let lm_score = ((base_freq + 1.0).ln() / max_freq_ln).clamp(0.0, 1.0);
-
-            let len_diff = (dedup_chars.len() as f32 - expected_len as f32).abs();
-            let len_penalty = 1.0 / (1.0 + len_diff * 0.06);
-
-            let mut total_score =
-                self.config.spatial_weight * spatial_score + self.config.lm_weight * lm_score;
-            total_score *= anchor * len_penalty * corner_recall;
-
-            results.push(GlideCandidate {
-                word,
-                total_score,
-                spatial_score,
-                language_model_score: lm_score,
-            });
         }
 
         results.sort_by(|a, b| b.total_score.partial_cmp(&a.total_score).unwrap_or(std::cmp::Ordering::Equal));
         results.truncate(8);
         results
-    }
-
-    fn collect_completed_words(
-        node: &TrieNode,
-        end_keys: &HashSet<char>,
-        out: &mut HashSet<String>,
-        max_depth: usize,
-    ) {
-        if node.is_word {
-            if let Some(ref w) = node.word {
-                if let Some(last_c) = w.chars().last() {
-                    if end_keys.contains(&last_c) {
-                        out.insert(w.clone());
-                    }
-                }
-            }
-        }
-        if max_depth == 0 {
-            return;
-        }
-        for child in node.children.values() {
-            Self::collect_completed_words(child, end_keys, out, max_depth - 1);
-        }
     }
 }
 
@@ -1368,5 +1443,193 @@ mod tests {
             total_trials,
             misses
         );
+    }
+
+    #[test]
+    fn test_realistic_curved_sloppy_swipes_benchmark() {
+        let mut map = HashMap::new();
+        let row1 = "qwertyuiop";
+        let row2 = "asdfghjkl";
+        let row3 = "zxcvbnm";
+        let gap = 12.0f32;
+        let avail_w = 1080.0f32 - 11.0 * gap;
+        let key_w = avail_w / 10.0;
+        let key_h = 162.0f32;
+
+        for (i, c) in row1.chars().enumerate() {
+            let left = gap + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, gap, left + key_w, gap + key_h)));
+        }
+        let row2_offset = gap + 0.5 * (key_w + gap);
+        for (i, c) in row2.chars().enumerate() {
+            let left = row2_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 2.0 * gap + key_h, left + key_w, 2.0 * gap + 2.0 * key_h)));
+        }
+        let row3_offset = gap + 1.5 * (key_w + gap);
+        for (i, c) in row3.chars().enumerate() {
+            let left = row3_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 3.0 * gap + 2.0 * key_h, left + key_w, 3.0 * gap + 3.0 * key_h)));
+        }
+
+        let mut lex = TrieLexicon::new();
+        lex.load_from_str(include_str!("../../../app/src/main/assets/wordlist.txt"));
+        let decoder = GlideDecoder::new(map.clone(), lex, None);
+
+        // Simulate realistic human thumb:
+        // - start/end drift up to +/-38px
+        // - cuts corners strongly (~35% pulled toward neighbor midpoint) rather than pausing at sharp centers
+        let build_curved_swipe = |word: &str| -> Vec<TouchPoint> {
+            let dedup = dedup_consecutive_chars(word);
+            let mut waypoints: Vec<(f32, f32)> = dedup
+                .iter()
+                .map(|c| {
+                    let k = &map[c];
+                    (k.center_x + 12.0, k.center_y + 20.0)
+                })
+                .collect();
+            // Corner-cut intermediate interior keys by 32% toward neighbors (real thumb rounding)
+            if waypoints.len() >= 3 {
+                let orig = waypoints.clone();
+                for i in 1..(waypoints.len() - 1) {
+                    let mid_x = 0.5 * (orig[i - 1].0 + orig[i + 1].0);
+                    let mid_y = 0.5 * (orig[i - 1].1 + orig[i + 1].1);
+                    waypoints[i].0 = 0.68 * orig[i].0 + 0.32 * mid_x;
+                    waypoints[i].1 = 0.68 * orig[i].1 + 0.32 * mid_y;
+                }
+            }
+            // Offset start/end slightly toward edges
+            waypoints[0].0 -= 26.0;
+            waypoints[0].1 += 24.0;
+            let last_i = waypoints.len() - 1;
+            waypoints[last_i].0 += 28.0;
+            waypoints[last_i].1 += 26.0;
+
+            let mut pts = Vec::new();
+            let mut t = 1000i64;
+            pts.push(TouchPoint::new(waypoints[0].0, waypoints[0].1, t, 1.0));
+            for seg in waypoints.windows(2) {
+                for step in 1..=5 {
+                    let f = step as f32 / 5.0;
+                    t += 18;
+                    pts.push(TouchPoint::new(
+                        seg[0].0 + f * (seg[1].0 - seg[0].0),
+                        seg[0].1 + f * (seg[1].1 - seg[0].1),
+                        t,
+                        1.0,
+                    ));
+                }
+            }
+            pts
+        };
+
+        let real_words = [
+            "the", "that", "with", "from", "this", "have", "what", "when", "your", "just",
+            "hello", "world", "quick", "brown", "phone", "there", "about", "which", "their", "would",
+            "keyboard", "typing", "finger", "swipe", "should", "because", "through", "different", "something",
+            "people", "little", "better", "letter", "tomorrow", "probably", "important", "remember", "together",
+            "question", "everyone", "everything", "understand", "available", "experience", "actually", "awesome",
+            "coffee", "banana", "friend", "family", "morning", "message", "please", "always", "never",
+        ];
+
+        let mut hits = 0usize;
+        let mut misses = Vec::new();
+        for &w in &real_words {
+            let swipe = build_curved_swipe(w);
+            let res = decoder.decode_gesture(&swipe);
+            let top = res.first().map(|c| c.word.as_str()).unwrap_or("<none>");
+            if top == w {
+                hits += 1;
+            } else {
+                misses.push(format!(
+                    "{} -> {:?}",
+                    w,
+                    res.iter().take(4).map(|c| format!("{}:{:.3}(sp={:.3},lm={:.2})", c.word, c.total_score, c.spatial_score, c.language_model_score)).collect::<Vec<_>>()
+                ));
+            }
+        }
+        println!(
+            "CURVED_SLOPPY_BENCH: {}/{} top-1 ({:.1}%); misses ({}): {:?}",
+            hits,
+            real_words.len(),
+            (hits as f64 / real_words.len() as f64) * 100.0,
+            misses.len(),
+            misses
+        );
+        assert!(
+            hits * 100 >= real_words.len() * 90,
+            "Expected >=90% top-1 on realistic curved swipes, got {}/{} — misses: {:?}",
+            hits,
+            real_words.len(),
+            misses
+        );
+    }
+
+    #[test]
+    fn test_contractions_swipe_decoding() {
+        let mut map = HashMap::new();
+        let row1 = "qwertyuiop";
+        let row2 = "asdfghjkl";
+        let row3 = "zxcvbnm";
+        let gap = 12.0f32;
+        let avail_w = 1080.0f32 - 11.0 * gap;
+        let key_w = avail_w / 10.0;
+        let key_h = 162.0f32;
+
+        for (i, c) in row1.chars().enumerate() {
+            let left = gap + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, gap, left + key_w, gap + key_h)));
+        }
+        let row2_offset = gap + 0.5 * (key_w + gap);
+        for (i, c) in row2.chars().enumerate() {
+            let left = row2_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 2.0 * gap + key_h, left + key_w, 2.0 * gap + 2.0 * key_h)));
+        }
+        let row3_offset = gap + 1.5 * (key_w + gap);
+        for (i, c) in row3.chars().enumerate() {
+            let left = row3_offset + i as f32 * (key_w + gap);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 3.0 * gap + 2.0 * key_h, left + key_w, 3.0 * gap + 3.0 * key_h)));
+        }
+
+        let mut lex = TrieLexicon::new();
+        lex.load_from_str(include_str!("../../../app/src/main/assets/wordlist.txt"));
+        let decoder = GlideDecoder::new(map.clone(), lex, None);
+
+        let build_swipe = |keys: &str| -> Vec<TouchPoint> {
+            let mut pts = Vec::new();
+            let mut t = 1000i64;
+            let chars: Vec<char> = keys.chars().collect();
+            for win in chars.windows(2) {
+                let k0 = &map[&win[0]];
+                let k1 = &map[&win[1]];
+                for s in 0..5 {
+                    let f = s as f32 / 4.0;
+                    t += 20;
+                    pts.push(TouchPoint::new(
+                        k0.center_x + f * (k1.center_x - k0.center_x),
+                        k0.center_y + f * (k1.center_y - k0.center_y),
+                        t,
+                        1.0,
+                    ));
+                }
+            }
+            pts
+        };
+
+        for (swipe_keys, expected_word) in [
+            ("dont", "don't"),
+            ("cant", "can't"),
+            ("wont", "won't"),
+            ("didnt", "didn't"),
+            ("im", "I'm"),
+            ("youre", "you're"),
+        ] {
+            let res = decoder.decode_gesture(&build_swipe(swipe_keys));
+            let top = res.first().map(|c| c.word.as_str()).unwrap_or("<none>");
+            assert_eq!(
+                top, expected_word,
+                "Expected '{}' for swipe '{}', got {:?}",
+                expected_word, swipe_keys, res
+            );
+        }
     }
 }

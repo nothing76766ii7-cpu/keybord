@@ -481,6 +481,10 @@ class MagicWritingCoordinator(
 
     private var lastOriginalText: String? = null
     private var lastRewrittenText: String? = null
+    private var lastReplacedSelection = false
+
+    val hasUndo: Boolean
+        get() = lastOriginalText != null && lastRewrittenText != null
 
     fun proofread(text: String): ProofreadResult {
         return proofreadEngine.proofread(text)
@@ -490,11 +494,36 @@ class MagicWritingCoordinator(
         return styleEngine.transformStyle(text, style)
     }
 
+    fun applyReplacement(
+        ic: InputConnection?,
+        originalText: String,
+        rewrittenText: String,
+        hadSelection: Boolean
+    ): Boolean {
+        if (ic == null || originalText.isEmpty() || rewrittenText == originalText) return false
+
+        lastOriginalText = originalText
+        lastRewrittenText = rewrittenText
+        lastReplacedSelection = hadSelection
+
+        ic.beginBatchEdit()
+        try {
+            if (!hadSelection) {
+                ic.deleteSurroundingText(originalText.length, 0)
+            }
+            ic.commitText(rewrittenText, 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        return true
+    }
+
     fun applyProofread(ic: InputConnection?, result: ProofreadResult): Boolean {
         if (ic == null || !result.hasChanges) return false
 
         lastOriginalText = result.originalText
         lastRewrittenText = result.correctedText
+        lastReplacedSelection = false
 
         ic.beginBatchEdit()
         try {
@@ -511,6 +540,7 @@ class MagicWritingCoordinator(
 
         lastOriginalText = originalText
         lastRewrittenText = draft.text
+        lastReplacedSelection = false
 
         ic.beginBatchEdit()
         try {
@@ -537,6 +567,7 @@ class MagicWritingCoordinator(
 
         lastOriginalText = null
         lastRewrittenText = null
+        lastReplacedSelection = false
         return true
     }
 }

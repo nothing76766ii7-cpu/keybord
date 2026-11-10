@@ -300,6 +300,34 @@ class UserHistoryStorage(
     }
 
     /**
+     * Returns promoted/known user words ordered by frequency for syncing into Glide lexicon.
+     */
+    fun getKnownWords(limit: Int = 500): List<WordEntry> {
+        return try {
+            val db = readableDatabase
+            val list = mutableListOf<WordEntry>()
+            val cursor = db.rawQuery(
+                "SELECT word, count, last_used, is_oov FROM unigrams WHERE is_oov = 0 ORDER BY count DESC, last_used DESC LIMIT ?",
+                arrayOf(limit.toString())
+            )
+            while (cursor.moveToNext()) {
+                list.add(
+                    WordEntry(
+                        word = cursor.getString(0),
+                        count = cursor.getInt(1),
+                        lastUsedTimestamp = cursor.getLong(2),
+                        isOov = cursor.getInt(3) == 1
+                    )
+                )
+            }
+            cursor.close()
+            list
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    /**
      * Deletes a word and all associated transitions from user history.
      * Used for PRD Section 4.3 candidate deletion on long-press.
      */

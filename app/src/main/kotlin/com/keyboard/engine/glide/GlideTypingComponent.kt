@@ -56,16 +56,16 @@ data class GlideCandidate(
 
 data class GlideEngineConfig(
     val minDistanceDp: Float = 24.0f,
-    val minDurationMs: Long = 60L,
-    val minTapIntervalMs: Long = 40L,
+    val minDurationMs: Long = 30L,
+    val minTapIntervalMs: Long = 15L,
     val resamplePointCount: Int = 40,
     val spatialSigmaXDp: Float = 22.0f,
     val spatialSigmaYDp: Float = 16.0f,
-    val anchorRadiusDp: Float = 36.0f,
+    val anchorRadiusDp: Float = 46.0f,
     val minBeamWidth: Int = 30,
     val maxBeamWidth: Int = 80,
-    val spatialWeight: Float = 0.65f,
-    val lmWeight: Float = 0.35f,
+    val spatialWeight: Float = 0.72f,
+    val lmWeight: Float = 0.28f,
     val velocityToleranceFactor: Float = 1.5f
 )
 
@@ -264,36 +264,85 @@ class TrieLexicon {
         var word: String? = null
     }
 
+    data class BucketEntry(
+        val word: String,
+        val dedupChars: List<Char>,
+        var frequency: Float
+    )
+
     val root = Node()
+    val endpointBuckets = HashMap<Pair<Char, Char>, MutableList<BucketEntry>>()
+    private val wordFrequencies = HashMap<String, Float>()
     var maxFrequency: Float = 1000f
         private set
 
     fun insert(word: String, frequency: Float = 1.0f) {
         if (word.isBlank()) return
         val clean = word.trim().lowercase()
+        val keyChars = ArrayList<Char>(clean.length)
+        for (c in clean) {
+            if (c in 'a'..'z') keyChars.add(c)
+        }
+        if (keyChars.isEmpty()) return
+        val display = when (clean) {
+            "i" -> "I"
+            "i'm" -> "I'm"
+            "i've" -> "I've"
+            "i'll" -> "I'll"
+            "i'd" -> "I'd"
+            else -> clean
+        }
+
         root.maxSubtreeFreq = maxOf(root.maxSubtreeFreq, frequency)
         var current = root
-        for (c in clean) {
+        for (c in keyChars) {
             current = current.children.getOrPut(c) { Node() }
             current.maxSubtreeFreq = maxOf(current.maxSubtreeFreq, frequency)
         }
+        if (keyChars.size >= 2) {
+            val dedup = ArrayList<Char>(keyChars.size)
+            for (c in keyChars) {
+                if (dedup.isEmpty() || dedup.last() != c) dedup.add(c)
+            }
+            if (dedup.size >= 2) {
+                val pair = keyChars.first() to keyChars.last()
+                val bucket = endpointBuckets.getOrPut(pair) { ArrayList() }
+                val existing = bucket.firstOrNull { it.word == display }
+                if (existing != null) {
+                    existing.frequency = maxOf(existing.frequency, frequency)
+                } else {
+                    bucket.add(BucketEntry(display, dedup, frequency))
+                }
+            }
+        }
+        wordFrequencies[display] = maxOf(wordFrequencies[display] ?: 0f, frequency)
+        wordFrequencies[clean] = maxOf(wordFrequencies[clean] ?: 0f, frequency)
+
+        val prevFreq = current.frequency
+        val isNew = !current.isWord
         current.isWord = true
-        current.frequency = maxOf(current.frequency, frequency)
+        current.frequency = maxOf(prevFreq, frequency)
         maxFrequency = maxOf(maxFrequency, current.frequency)
-        current.word = clean
+        if (isNew || frequency >= prevFreq) current.word = display
     }
 
     fun contains(word: String): Boolean {
+        val clean = word.trim().lowercase()
+        if (wordFrequencies.containsKey(clean)) return true
         var current = root
-        for (c in word.lowercase()) {
+        for (c in clean) {
+            if (c !in 'a'..'z') continue
             current = current.children[c] ?: return false
         }
         return current.isWord
     }
 
     fun getFrequency(word: String): Float {
+        val clean = word.trim().lowercase()
+        wordFrequencies[clean]?.let { return it }
         var current = root
-        for (c in word.lowercase()) {
+        for (c in clean) {
+            if (c !in 'a'..'z') continue
             current = current.children[c] ?: return 0f
         }
         return if (current.isWord) current.frequency else 0f
@@ -531,6 +580,90 @@ class SpatialModel(
         return exp(-cost[n][m] / (n + m))
     }
 
+    fun alignShark2DualChannel(
+        dedupChars: List<Char>,
+        uPtsX: FloatArray,
+        uPtsY: FloatArray,
+        uNormX: FloatArray,
+        uNormY: FloatArray,
+        uTanX: FloatArray,
+        uTanY: FloatArray,
+        averageVelocity: Float = 0f
+    ): Pair<Float, Float> {
+        val sampleN = uPtsX.size
+        val len = dedupChars.size
+        if (len < 2 || sampleN == 0) return 0f to 0f
+
+        val rawX = FloatArray(len)
+        val rawY = FloatArray(len)
+        for (i in 0 until len) {
+            val k = keyPositions[dedupChars[i]] ?: return 0f to 0f
+            rawX[i] = k.centerX
+            rawY[i] = k.centerY
+        }
+
+        val smoothX = rawX.copyOf()
+        val smoothY = rawY.copyOf()
+        if (len >= 3) {
+            for (i in 1 until (len - 1)) {
+                smoothX[i] = 0.74f * rawX[i] + 0.13f * rawX[i - 1] + 0.13f * rawX[i + 1]
+                smoothY[i] = 0.74f * rawY[i] + 0.13f * rawY[i - 1] + 0.13f * rawY[i + 1]
+            }
+        }
+
+        var tArc = 0f
+        for (i in 1 until len) {
+            tArc += hypot(smoothX[i] - smoothX[i - 1], smoothY[i] - smoothY[i - 1])
+        }
+
+        val (tPtsX, tPtsY) = resampleXY(smoothX, smoothY, sampleN)
+        val (tNormX, tNormY, tTanX, tTanY) = normalizeAndTangents(tPtsX, tPtsY, keyUnitPx)
+
+        val normVel = averageVelocity / (keyUnitPx / 100f).coerceAtLeast(0.5f)
+        val speedFactor = 1.0f + (normVel * config.velocityToleranceFactor * 0.10f).coerceIn(0f, 0.35f)
+        val sx = config.spatialSigmaXDp * dpiScale * speedFactor
+        val sy = config.spatialSigmaYDp * dpiScale * speedFactor
+
+        val band = 3
+        val prevRow = FloatArray(sampleN + 1) { 1e6f }
+        val currRow = FloatArray(sampleN + 1) { 1e6f }
+        prevRow[0] = 0f
+
+        for (i in 1..sampleN) {
+            currRow.fill(1e6f)
+            val ui = i - 1
+            val jStart = max(1, i - band)
+            val jEnd = min(sampleN, i + band)
+            val ux = uPtsX[ui]
+            val uy = uPtsY[ui]
+            val unx = uNormX[ui]
+            val uny = uNormY[ui]
+            val utx = uTanX[ui]
+            val uty = uTanY[ui]
+
+            for (j in jStart..jEnd) {
+                val tj = j - 1
+                val dx = (ux - tPtsX[tj]) / sx
+                val dy = (uy - tPtsY[tj]) / sy
+                val locErr = 0.5f * (dx * dx + dy * dy)
+
+                val sdx = unx - tNormX[tj]
+                val sdy = uny - tNormY[tj]
+                val shapeErr = (sdx * sdx + sdy * sdy) * 3.0f
+
+                val dot = (utx * tTanX[tj] + uty * tTanY[tj]).coerceIn(-1f, 1f)
+                val dirErr = (1.0f - dot) * 0.55f
+
+                val stepCost = 0.48f * locErr + 0.34f * shapeErr + 0.18f * dirErr
+                currRow[j] = min(prevRow[j - 1], min(prevRow[j] + 0.04f, currRow[j - 1] + 0.04f)) + stepCost
+            }
+            System.arraycopy(currRow, 0, prevRow, 0, sampleN + 1)
+        }
+
+        val avgCost = prevRow[sampleN] / sampleN.toFloat()
+        return exp(-avgCost) to tArc
+    }
+
     fun findProximityKeys(point: TouchPoint, maxRadiusPx: Float = keyUnitPx * 1.2f): List<Char> {
         val list = mutableListOf<Pair<Char, Float>>()
         for ((char, key) in keyPositions) {
@@ -543,6 +676,13 @@ class SpatialModel(
         return list.map { it.first }
     }
 
+    data class NormalizedShape(
+        val normX: FloatArray,
+        val normY: FloatArray,
+        val tanX: FloatArray,
+        val tanY: FloatArray
+    )
+
     companion object {
         fun dedupConsecutiveChars(word: String): List<Char> {
             val out = ArrayList<Char>(word.length)
@@ -550,6 +690,86 @@ class SpatialModel(
                 if (out.isEmpty() || out.last() != ch) out.add(ch)
             }
             return out
+        }
+
+        fun resampleXY(srcX: FloatArray, srcY: FloatArray, targetCount: Int): Pair<FloatArray, FloatArray> {
+            val outX = FloatArray(targetCount)
+            val outY = FloatArray(targetCount)
+            val n = srcX.size
+            if (n == 0 || targetCount == 0) return outX to outY
+            if (n == 1 || targetCount == 1) {
+                outX.fill(srcX[0])
+                outY.fill(srcY[0])
+                return outX to outY
+            }
+            val cum = FloatArray(n)
+            for (i in 1 until n) {
+                cum[i] = cum[i - 1] + hypot(srcX[i] - srcX[i - 1], srcY[i] - srcY[i - 1])
+            }
+            val total = cum[n - 1]
+            if (total <= 1e-4f) {
+                outX.fill(srcX[0])
+                outY.fill(srcY[0])
+                return outX to outY
+            }
+            val step = total / (targetCount - 1).toFloat()
+            outX[0] = srcX[0]
+            outY[0] = srcY[0]
+            var rawIdx = 0
+            for (k in 1 until (targetCount - 1)) {
+                val targetD = k * step
+                while (rawIdx < n - 2 && cum[rawIdx + 1] < targetD) {
+                    rawIdx++
+                }
+                val seg = cum[rawIdx + 1] - cum[rawIdx]
+                val t = if (seg > 1e-5f) (targetD - cum[rawIdx]) / seg else 0f
+                outX[k] = srcX[rawIdx] + t * (srcX[rawIdx + 1] - srcX[rawIdx])
+                outY[k] = srcY[rawIdx] + t * (srcY[rawIdx + 1] - srcY[rawIdx])
+            }
+            outX[targetCount - 1] = srcX[n - 1]
+            outY[targetCount - 1] = srcY[n - 1]
+            return outX to outY
+        }
+
+        fun normalizeAndTangents(ptsX: FloatArray, ptsY: FloatArray, keyUnit: Float): NormalizedShape {
+            val n = ptsX.size
+            val normX = FloatArray(n)
+            val normY = FloatArray(n)
+            val tanX = FloatArray(n)
+            val tanY = FloatArray(n)
+            if (n == 0) return NormalizedShape(normX, normY, tanX, tanY)
+
+            var mx = 0f
+            var my = 0f
+            for (i in 0 until n) {
+                mx += ptsX[i]
+                my += ptsY[i]
+            }
+            mx /= n.toFloat()
+            my /= n.toFloat()
+
+            var variance = 0f
+            for (i in 0 until n) {
+                val dx = ptsX[i] - mx
+                val dy = ptsY[i] - my
+                variance += dx * dx + dy * dy
+            }
+            val rms = sqrt(variance / n.toFloat()).coerceAtLeast(keyUnit * 0.5f)
+
+            for (i in 0 until n) {
+                normX[i] = (ptsX[i] - mx) / rms
+                normY[i] = (ptsY[i] - my) / rms
+                val prevIdx = if (i == 0) 0 else i - 1
+                val nextIdx = if (i + 1 >= n) n - 1 else i + 1
+                val dx = ptsX[nextIdx] - ptsX[prevIdx]
+                val dy = ptsY[nextIdx] - ptsY[prevIdx]
+                val len = hypot(dx, dy)
+                if (len > 1e-3f) {
+                    tanX[i] = dx / len
+                    tanY[i] = dy / len
+                }
+            }
+            return NormalizedShape(normX, normY, tanX, tanY)
         }
     }
 }
@@ -591,117 +811,66 @@ class GlideDecoder(
 
         val startKeys = spatialModel.findProximityKeys(startPt, anchorRadius)
             .filter { spatialModel.anchorScoreForChar(startPt, it) > 0f }
+            .take(4)
         val endKeys = spatialModel.findProximityKeys(endPt, anchorRadius)
             .filter { spatialModel.anchorScoreForChar(endPt, it) > 0f }
-            .toSet()
+            .take(4)
         if (startKeys.isEmpty() || endKeys.isEmpty()) return emptyList()
 
-        val refArc = 400.0f * spatialModel.dpiScale
-        val dynamicBeam = (config.minBeamWidth.toFloat() +
-            (arcLength / refArc) * (config.maxBeamWidth - config.minBeamWidth).toFloat())
-            .toInt()
-            .coerceIn(config.minBeamWidth, config.maxBeamWidth)
-
-        val sharpCorners = processor.extractSharpCornerIndices(smoothed)
-        val cornerIndices = processor.extractCorners(smoothed, 0.5f)
-        val step = max(1, smoothed.size / 20)
-        val sampleIndices = ((step until smoothed.size step step) + sharpCorners + cornerIndices + (smoothed.size - 1))
-            .distinct()
-            .sorted()
-            .filter { it in 1 until smoothed.size }
+        val sampleN = 24
+        val rawX = FloatArray(smoothed.size) { smoothed[it].x }
+        val rawY = FloatArray(smoothed.size) { smoothed[it].y }
+        val (uPtsX, uPtsY) = SpatialModel.resampleXY(rawX, rawY, sampleN)
+        val (uNormX, uNormY, uTanX, uTanY) = SpatialModel.normalizeAndTangents(
+            uPtsX,
+            uPtsY,
+            spatialModel.computeKeyUnitPx()
+        )
 
         val maxFreqLn = ln(lexicon.maxFrequency + 1f).coerceAtLeast(1f)
+        val rGauss = max(40f, anchorRadius * 0.68f)
 
-        data class BeamNode(
-            val node: TrieLexicon.Node,
-            val word: String,
-            val cumScore: Float,
-            val rankScore: Float
-        )
-        var beam = mutableListOf<BeamNode>()
-        for (sc in startKeys) {
-            val child = lexicon.root.children[sc] ?: continue
-            val s = spatialModel.pointKeyDistanceScore(startPt, sc, avgVelocity)
-            val prior = (ln(child.maxSubtreeFreq + 1f) / maxFreqLn).coerceIn(0f, 1f)
-            beam.add(BeamNode(child, sc.toString(), s, s + 0.12f * prior))
-        }
-
-        val stepRadius = spatialModel.computeKeyUnitPx() * 1.15f
-
-        for (pIdx in sampleIndices) {
-            if (beam.isEmpty()) break
-            val pt = smoothed[pIdx]
-            val nearKeys = spatialModel.findProximityKeys(pt, stepRadius)
-            val nextBeam = mutableListOf<BeamNode>()
-            for (b in beam) {
-                for (k in nearKeys) {
-                    val child = b.node.children[k] ?: continue
-                    val score = spatialModel.pointKeyDistanceScore(pt, k, avgVelocity)
-                    if (score < 0.22f) continue
-                    val newCum = b.cumScore + (score - 0.18f)
-                    val prior = (ln(child.maxSubtreeFreq + 1f) / maxFreqLn).coerceIn(0f, 1f)
-                    nextBeam.add(BeamNode(child, b.word + k, newCum, newCum + 0.12f * prior))
-                }
-                val lastC = b.word.last()
-                val doubleChild = b.node.children[lastC]
-                if (doubleChild != null) {
-                    val stayScore = spatialModel.pointKeyDistanceScore(pt, lastC, avgVelocity)
-                    if (stayScore > 0.35f) {
-                        val newCum = b.cumScore - 0.01f
-                        val prior = (ln(doubleChild.maxSubtreeFreq + 1f) / maxFreqLn).coerceIn(0f, 1f)
-                        nextBeam.add(BeamNode(doubleChild, b.word + lastC, newCum, newCum + 0.12f * prior))
-                    }
-                }
-                val cruiseCum = b.cumScore - 0.015f
-                val cruisePrior = (ln(b.node.maxSubtreeFreq + 1f) / maxFreqLn).coerceIn(0f, 1f)
-                nextBeam.add(BeamNode(b.node, b.word, cruiseCum, cruiseCum + 0.12f * cruisePrior))
-            }
-            nextBeam.sortByDescending { it.rankScore }
-            beam = nextBeam.distinctBy { it.word }.take(dynamicBeam).toMutableList()
-        }
-
-        val candidates = mutableSetOf<String>()
-        for (b in beam) {
-            if (b.node.isWord && endKeys.contains(b.word.last())) candidates.add(b.word)
-            for (ec in endKeys) {
-                val endChild = b.node.children[ec]
-                if (endChild != null && endChild.isWord && endChild.word != null) {
-                    candidates.add(endChild.word!!)
-                }
-                val nested = b.node.children[b.word.last()]?.children?.get(ec)
-                if (nested != null && nested.isWord && nested.word != null) {
-                    candidates.add(nested.word!!)
-                }
-            }
-        }
-        for (sc in startKeys) {
-            val sNode = lexicon.root.children[sc] ?: continue
-            for (ec in endKeys) {
-                val twoChar = sNode.children[ec]
-                if (twoChar != null && twoChar.isWord && twoChar.word != null) candidates.add(twoChar.word!!)
-            }
-        }
-
-        val expectedLen = sharpCorners.size + 2
+        val seenCandidates = HashSet<String>()
         val results = mutableListOf<GlideCandidate>()
-        for (w in candidates) {
-            if (w.length < 2) continue
-            val anchor = spatialModel.anchorScoreForChar(startPt, w.first()) *
-                spatialModel.anchorScoreForChar(endPt, w.last())
-            if (anchor <= 0f) continue
 
-            val spatialScore = spatialModel.alignWordTrajectory(w, smoothed, avgVelocity)
-            if (spatialScore < 0.005f) continue
+        for (sc in startKeys) {
+            val startK = keyPositions[sc] ?: continue
+            val sdx = startPt.x - startK.centerX
+            val sdy = startPt.y - startK.centerY
+            val startG = exp(-((sdx * sdx + sdy * sdy) / (2.0f * rGauss * rGauss)))
 
-            val dedupChars = SpatialModel.dedupConsecutiveChars(w)
-            val cornerRecall = spatialModel.cornerRecallScore(dedupChars, smoothed, sharpCorners, avgVelocity)
-            val lmScore = (ln(lexicon.getFrequency(w) + 1f) / maxFreqLn).coerceIn(0f, 1f)
-            val lenDiff = abs(dedupChars.size.toFloat() - expectedLen.toFloat())
-            val lenPenalty = 1.0f / (1.0f + lenDiff * 0.06f)
+            for (ec in endKeys) {
+                val bucket = lexicon.endpointBuckets[sc to ec] ?: continue
+                val endK = keyPositions[ec] ?: continue
+                val edx = endPt.x - endK.centerX
+                val edy = endPt.y - endK.centerY
+                val endG = exp(-((edx * edx + edy * edy) / (2.0f * rGauss * rGauss)))
+                val anchorFactor = 0.60f + 0.40f * sqrt(startG * endG)
 
-            val total = (config.spatialWeight * spatialScore + config.lmWeight * lmScore) *
-                anchor * lenPenalty * cornerRecall
-            results.add(GlideCandidate(w, total, spatialScore, lmScore))
+                for (entry in bucket) {
+                    if (!seenCandidates.add(entry.word)) continue
+
+                    val (spatialScore, tArc) = spatialModel.alignShark2DualChannel(
+                        dedupChars = entry.dedupChars,
+                        uPtsX = uPtsX,
+                        uPtsY = uPtsY,
+                        uNormX = uNormX,
+                        uNormY = uNormY,
+                        uTanX = uTanX,
+                        uTanY = uTanY,
+                        averageVelocity = avgVelocity
+                    )
+                    if (spatialScore < 0.01f) continue
+
+                    val arcRatio = (min(arcLength, tArc) / max(1f, max(arcLength, tArc)))
+                        .coerceIn(0.45f, 1.0f)
+                    val arcFactor = 0.88f + 0.12f * arcRatio
+
+                    val lmScore = (ln(entry.frequency + 1f) / maxFreqLn).coerceIn(0f, 1f)
+                    val total = (spatialScore * anchorFactor * arcFactor) * (0.78f + 0.22f * lmScore)
+                    results.add(GlideCandidate(entry.word, total, spatialScore, lmScore))
+                }
+            }
         }
         results.sort()
         return results.take(8)
