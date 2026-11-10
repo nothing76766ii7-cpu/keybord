@@ -708,6 +708,7 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
             }
+            Unit
         }
         invalidate()
     }

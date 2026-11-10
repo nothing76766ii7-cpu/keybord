@@ -97,7 +97,7 @@ class KeyboardLayoutCustomizeActivity : Activity() {
         root.addView(scrollView)
 
         val applyBtn = UiKit.createPillButton(this, "✓  Apply to Keyboard", filled = true) {
-            themeRepo.setActiveTheme(baseTheme)
+            themeRepo.setActiveTheme(baseTheme.id)
             Toast.makeText(this, "Keyboard height & button layout applied!", Toast.LENGTH_SHORT).show()
             finish()
         }.apply {
