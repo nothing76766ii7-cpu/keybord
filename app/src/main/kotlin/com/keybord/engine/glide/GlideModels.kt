@@ -45,8 +45,11 @@ data class GlideEngineConfig(
     val minDurationMs: Long = 60L,
     val minTapIntervalMs: Long = 40L,
     val resamplePointCount: Int = 40,
-    val spatialSigmaDp: Float = 18.0f,
-    val maxBeamWidth: Int = 40,
+    val spatialSigmaXDp: Float = 22.0f,
+    val spatialSigmaYDp: Float = 16.0f,
+    val anchorRadiusDp: Float = 36.0f,
+    val minBeamWidth: Int = 30,
+    val maxBeamWidth: Int = 80,
     val spatialWeight: Float = 0.65f,
     val lmWeight: Float = 0.35f,
     val velocityToleranceFactor: Float = 1.5f

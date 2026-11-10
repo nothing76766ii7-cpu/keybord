@@ -203,8 +203,27 @@ class KeyboardIME : InputMethodService() {
         updateNextWordPredictions()
     }
 
-    private fun onGlideCandidates(candidates: List<GlideCandidate>) {
+    fun rerankWithContext(
+        candidates: List<GlideCandidate>,
+        recentWords: List<String>
+    ): List<GlideCandidate> {
+        if (candidates.size <= 1) return candidates
+        val prevWord = recentWords.lastOrNull()?.trim()?.lowercase()
+            ?.trimEnd('.', ',', '!', '?', ';', ':', '"', '\'')
+            ?: return candidates
+        if (prevWord.isEmpty()) return candidates
+
+        return candidates.map { candidate ->
+            val bigramScore = vocabEngine.storage.getBigramScore(prevWord, candidate.word)
+            val contextBoost = 1.0f + (bigramScore * 0.4f)
+            candidate.copy(totalScore = candidate.totalScore * contextBoost)
+        }.sortedByDescending { it.totalScore }
+    }
+
+    private fun onGlideCandidates(rawCandidates: List<GlideCandidate>) {
         val ic = currentInputConnection ?: return
+        val candidates = rerankWithContext(rawCandidates, recentWords)
+        if (candidates.isEmpty()) return
         val word = candidates.first().word
         ic.beginBatchEdit()
         ic.commitText("$word ", 1)

@@ -349,11 +349,12 @@ class KeybordIME : InputMethodService() {
                         glideDecoder.updateKeyPositions(currentPositions)
                     }
 
-                    val candidates = if (pointsSnapshot.size >= 2) {
+                    val rawCandidates = if (pointsSnapshot.size >= 2) {
                         glideDecoder.decodeGesture(pointsSnapshot)
                     } else {
                         emptyList()
                     }
+                    val candidates = rerankWithContext(rawCandidates, resolveRecentContextWords())
 
                     if (candidates.isNotEmpty()) {
                         keyboardView.cancelActiveTouch()
@@ -378,6 +379,37 @@ class KeybordIME : InputMethodService() {
             }
         }
         return false
+    }
+
+    private fun resolveRecentContextWords(): List<String> {
+        val before = try {
+            currentInputConnection?.getTextBeforeCursor(48, 0)?.toString()
+        } catch (_: Exception) {
+            null
+        }
+        if (!before.isNullOrBlank()) {
+            val tokens = before.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (tokens.isNotEmpty()) {
+                return tokens.takeLast(3)
+            }
+        }
+        return recentContextWords
+    }
+
+    fun rerankWithContext(
+        candidates: List<GlideCandidate>,
+        recentWords: List<String>
+    ): List<GlideCandidate> {
+        if (candidates.size <= 1) return candidates
+        val rawPrev = recentWords.lastOrNull()?.trim()?.lowercase() ?: return candidates
+        val prevWord = rawPrev.trimEnd('.', ',', '!', '?', ';', ':', '"', '\'')
+        if (prevWord.isEmpty()) return candidates
+
+        return candidates.map { candidate ->
+            val bigramScore = vocabEngine.storage.getBigramScore(prevWord, candidate.word)
+            val contextBoost = 1.0f + (bigramScore * 0.4f)
+            candidate.copy(totalScore = candidate.totalScore * contextBoost)
+        }.sortedByDescending { it.totalScore }
     }
 
     private fun onGlideCandidates(candidates: List<GlideCandidate>) {

@@ -203,4 +203,47 @@ class TrajectoryProcessor(private val config: GlideEngineConfig) {
         corners.add(points.size - 1) // End point is always a primary key candidate
         return corners
     }
+
+    /**
+     * Extracts deduplicated sharp direction-change corner indices using a wider stride
+     * so smoothing and micro-jitter do not split one turn into multiple corners.
+     */
+    fun extractSharpCornerIndices(points: List<TouchPoint>): List<Int> {
+        if (points.size < 3) return emptyList()
+        val stride = if (points.size >= 12) 2 else 1
+        val bestCorners = mutableListOf<Pair<Int, Float>>()
+        for (i in stride until (points.size - stride)) {
+            val v1x = points[i].x - points[i - stride].x
+            val v1y = points[i].y - points[i - stride].y
+            val v2x = points[i + stride].x - points[i].x
+            val v2y = points[i + stride].y - points[i].y
+            val len1 = hypot(v1x, v1y)
+            val len2 = hypot(v2x, v2y)
+            if (len1 > 1.0f && len2 > 1.0f) {
+                val cos = ((v1x * v2x + v1y * v2y) / (len1 * len2)).coerceIn(-1.0f, 1.0f)
+                if (cos < 0.45f) {
+                    val last = bestCorners.lastOrNull()
+                    if (last != null && i - last.first <= stride + 1) {
+                        if (cos < last.second) {
+                            bestCorners[bestCorners.lastIndex] = i to cos
+                        }
+                        continue
+                    }
+                    bestCorners.add(i to cos)
+                }
+            }
+        }
+        return bestCorners.map { it.first }
+    }
+
+    fun trajectoryCornerCount(points: List<TouchPoint>): Int =
+        extractSharpCornerIndices(points).size + 1
+
+    fun computeArcLength(points: List<TouchPoint>): Float {
+        var total = 0f
+        for (i in 0 until points.size - 1) {
+            total += points[i].distanceTo(points[i + 1])
+        }
+        return total
+    }
 }

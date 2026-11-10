@@ -11,28 +11,34 @@ class TrieLexicon {
         val children = HashMap<Char, Node>()
         var isWord: Boolean = false
         var frequency: Float = 0f
+        var maxSubtreeFreq: Float = 0f
         var word: String? = null
     }
 
     val root = Node()
     var wordCount = 0
         private set
+    var maxFrequency = 1000f
+        private set
 
     /**
-     * Inserts a word with a base frequency into the Trie.
+     * Inserts a word with a base frequency into the Trie, propagating subtree max frequency.
      */
     fun insert(word: String, frequency: Float = 1.0f) {
         if (word.isBlank()) return
         val cleanWord = word.trim().lowercase()
+        root.maxSubtreeFreq = maxOf(root.maxSubtreeFreq, frequency)
         var current = root
         for (char in cleanWord) {
             current = current.children.getOrPut(char) { Node() }
+            current.maxSubtreeFreq = maxOf(current.maxSubtreeFreq, frequency)
         }
         if (!current.isWord) {
             wordCount++
         }
         current.isWord = true
         current.frequency = maxOf(current.frequency, frequency)
+        maxFrequency = maxOf(maxFrequency, current.frequency)
         current.word = cleanWord
     }
 
@@ -59,26 +65,40 @@ class TrieLexicon {
     }
 
     /**
-     * Loads tab-separated word<TAB>frequency lexicon from assets/wordlist.txt,
-     * falling back to starter vocabulary if assets are unavailable.
+     * Loads tab-separated `word<TAB>frequency` or rank-ordered one-word-per-line entries.
+     */
+    fun loadFromSequence(lines: Sequence<String>): Int {
+        var rank = 0
+        var inserted = 0
+        for (raw in lines) {
+            val trimmed = raw.trim()
+            if (trimmed.isEmpty()) continue
+            rank++
+            val parts = trimmed.split('\t')
+            val word = parts.getOrNull(0) ?: continue
+            val freq = parts.getOrNull(1)?.trim()?.toFloatOrNull()
+                ?: (10000 - rank).coerceAtLeast(1).toFloat()
+            if (word.isNotEmpty()) {
+                insert(word, freq)
+                inserted++
+            }
+        }
+        return inserted
+    }
+
+    /**
+     * Loads lexicon from assets/wordlist.txt, falling back to starter vocabulary only if missing/empty.
      */
     fun loadFromAssets(context: Context) {
-        loadDefaultVocabulary()
-        try {
+        val loaded = try {
             context.assets.open("wordlist.txt")
                 .bufferedReader()
-                .useLines { lines ->
-                    lines.forEach { line ->
-                        val parts = line.trim().split('\t')
-                        val word = parts.getOrNull(0) ?: return@forEach
-                        val freq = parts.getOrNull(1)?.toFloatOrNull() ?: 500f
-                        if (word.isNotEmpty()) {
-                            insert(word, freq)
-                        }
-                    }
-                }
+                .useLines { lines -> loadFromSequence(lines) }
         } catch (_: Exception) {
-            // Starter vocabulary already loaded above
+            0
+        }
+        if (loaded == 0) {
+            loadDefaultVocabulary()
         }
     }
 

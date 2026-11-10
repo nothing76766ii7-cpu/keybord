@@ -228,6 +228,37 @@ class UserHistoryStorage(
         return list
     }
 
+    /**
+     * Returns normalized bigram likelihood P(word | prevWord) in [0.0, 1.0].
+     */
+    fun getBigramScore(prevWord: String, word: String): Float {
+        val c1 = prevWord.lowercase().trim()
+        val c2 = word.lowercase().trim()
+        if (c1.isEmpty() || c2.isEmpty()) return 0f
+        return try {
+            val db = readableDatabase
+            val pairCount = db.rawQuery(
+                "SELECT count FROM bigrams WHERE w1 = ? AND w2 = ?",
+                arrayOf(c1, c2)
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            }
+            if (pairCount <= 0) return 0f
+            val totalCount = db.rawQuery(
+                "SELECT SUM(count) FROM bigrams WHERE w1 = ?",
+                arrayOf(c1)
+            ).use { cursor ->
+                if (cursor.moveToFirst()) cursor.getInt(0) else 0
+            }
+            if (totalCount <= 0) return 0f
+            val conditional = pairCount.toFloat() / totalCount.toFloat()
+            val saturation = (pairCount.toFloat() / 4.0f).coerceIn(0f, 1f)
+            (conditional * saturation).coerceIn(0f, 1f)
+        } catch (_: Exception) {
+            0f
+        }
+    }
+
     fun getTrigramCompletions(w1: String, w2: String, limit: Int = 10): List<Pair<String, Int>> {
         val db = readableDatabase
         val list = mutableListOf<Pair<String, Int>>()

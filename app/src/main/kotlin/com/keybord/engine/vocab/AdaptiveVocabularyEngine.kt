@@ -15,8 +15,11 @@ class AdaptiveVocabularyEngine(
     inMemory: Boolean = (context == null)
 ) {
 
-    private val storage = UserHistoryStorage(context, config, inMemory)
+    val storage = UserHistoryStorage(context, config, inMemory)
     val personalDictionary = PersonalDictionaryManager(context)
+
+    fun getBigramScore(prevWord: String, word: String): Float =
+        storage.getBigramScore(prevWord, word)
 
     /**
      * Called whenever a word is committed to the text input field.
