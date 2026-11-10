@@ -149,8 +149,9 @@ class KeyboardView @JvmOverloads constructor(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = resources.displayMetrics.density
         val totalHeightDp = (theme.keyHeightDp * 4f) + (theme.keyGapVerticalDp * 5f) + theme.bottomPaddingDp
-        val heightPx = (totalHeightDp * density).toInt()
+        val desiredHeightPx = (totalHeightDp * density).toInt()
         val widthPx = MeasureSpec.getSize(widthMeasureSpec)
+        val heightPx = resolveSize(desiredHeightPx, heightMeasureSpec)
         setMeasuredDimension(widthPx, heightPx)
     }
 

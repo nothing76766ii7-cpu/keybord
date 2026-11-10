@@ -4,6 +4,8 @@ import android.inputmethodservice.InputMethodService
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -45,6 +47,7 @@ class KeyboardIME : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        configureImeWindow()
 
         // Step 2.3a: Instantiate AdaptiveVocabularyEngine once in onCreate
         vocabEngine = AdaptiveVocabularyEngine(
@@ -63,12 +66,45 @@ class KeyboardIME : InputMethodService() {
         appProfileManager = AppProfileManager(this)
     }
 
+    private fun applyBottomWindowConfig(win: Window) {
+        win.setGravity(Gravity.BOTTOM)
+        win.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        @Suppress("DEPRECATION")
+        win.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        win.attributes = win.attributes?.also { params ->
+            params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+    }
+
+    private fun configureImeWindow() {
+        window?.window?.let { applyBottomWindowConfig(it) }
+    }
+
+    override fun onConfigureWindow(
+        win: Window,
+        isFullscreen: Boolean,
+        isCandidatesOnly: Boolean
+    ) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        if (!isFullscreen) {
+            applyBottomWindowConfig(win)
+        }
+    }
+
     override fun onCreateInputView(): View {
+        val dp = resources.displayMetrics.density
         rootLayout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
+            gravity = Gravity.BOTTOM
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
             )
         }
 
@@ -76,7 +112,7 @@ class KeyboardIME : InputMethodService() {
         suggestionStrip = SuggestionStrip(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                120
+                (44f * dp).toInt()
             )
             onCandidateSelected = { candidate ->
                 handleCandidateSelected(candidate)
@@ -94,14 +130,15 @@ class KeyboardIME : InputMethodService() {
         keyboardFrame = FrameLayout(this).apply {
             layoutParams = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                650
+                LinearLayout.LayoutParams.WRAP_CONTENT
             )
         }
 
         keyboardView = KeyboardView(this).apply {
             layoutParams = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
             )
             this.suggestionStrip = this@KeyboardIME.suggestionStrip
             onKeyTapListener = { ch ->
@@ -127,12 +164,22 @@ class KeyboardIME : InputMethodService() {
         keyboardFrame.addView(gestureOverlay)
 
         rootLayout.addView(keyboardFrame)
+        configureImeWindow()
         return rootLayout
     }
 
     // Step 2.5c: Attach InputConnection on each input session start
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        (rootLayout.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.gravity != Gravity.BOTTOM) {
+                lp.gravity = Gravity.BOTTOM
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                rootLayout.layoutParams = lp
+            }
+        }
+        configureImeWindow()
         val currentCursorOffset = currentInputConnection?.getTextBeforeCursor(1000, 0)?.length ?: 0
         ramblerController.attachInputConnection(currentInputConnection)
         ramblerController.startSession(currentCursorOffset)

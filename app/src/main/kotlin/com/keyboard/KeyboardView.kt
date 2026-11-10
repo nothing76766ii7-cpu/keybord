@@ -56,6 +56,14 @@ class KeyboardView @JvmOverloads constructor(
         "zxcvbnm"
     )
 
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val density = resources.displayMetrics.density
+        val desiredHeightPx = (220f * density).toInt()
+        val widthPx = MeasureSpec.getSize(widthMeasureSpec)
+        val heightPx = resolveSize(desiredHeightPx, heightMeasureSpec)
+        setMeasuredDimension(widthPx, heightPx)
+    }
+
     override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
         super.onSizeChanged(w, h, oldw, oldh)
         recomputeKeys(w, h)

@@ -8,6 +8,8 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.Window
+import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
@@ -61,6 +63,7 @@ class KeybordIME : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        configureImeWindow()
 
         // 1. Initialize Lexicon & Glide Engine
         lexicon = TrieLexicon().apply {
@@ -92,6 +95,36 @@ class KeybordIME : InputMethodService() {
         profileRepo = AppProfileRepository(this)
     }
 
+    private fun applyBottomWindowConfig(win: Window) {
+        win.setGravity(Gravity.BOTTOM)
+        win.setLayout(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT
+        )
+        @Suppress("DEPRECATION")
+        win.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        win.attributes = win.attributes?.also { params ->
+            params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+            params.width = ViewGroup.LayoutParams.MATCH_PARENT
+            params.height = ViewGroup.LayoutParams.WRAP_CONTENT
+        }
+    }
+
+    private fun configureImeWindow() {
+        window?.window?.let { applyBottomWindowConfig(it) }
+    }
+
+    override fun onConfigureWindow(
+        win: Window,
+        isFullscreen: Boolean,
+        isCandidatesOnly: Boolean
+    ) {
+        super.onConfigureWindow(win, isFullscreen, isCandidatesOnly)
+        if (!isFullscreen) {
+            applyBottomWindowConfig(win)
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         clipboardManager.stopListening()
@@ -102,9 +135,11 @@ class KeybordIME : InputMethodService() {
 
         rootContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            layoutParams = ViewGroup.LayoutParams(
+            gravity = Gravity.BOTTOM
+            layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
             )
         }
 
@@ -144,6 +179,11 @@ class KeybordIME : InputMethodService() {
 
         keyboardView = KeyboardView(this).apply {
             theme = activeTheme
+            layoutParams = FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM
+            )
             onKeyTap = { key ->
                 handleKeyTap(key)
             }
@@ -190,11 +230,21 @@ class KeybordIME : InputMethodService() {
         }
 
         applyTheme(activeTheme)
+        configureImeWindow()
         return rootContainer
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         super.onStartInputView(info, restarting)
+        (rootContainer.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+            if (lp.gravity != Gravity.BOTTOM) {
+                lp.gravity = Gravity.BOTTOM
+                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                rootContainer.layoutParams = lp
+            }
+        }
+        configureImeWindow()
         currentWordPrefix.clear()
         recentContextWords.clear()
 
