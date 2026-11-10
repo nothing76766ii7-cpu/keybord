@@ -530,7 +530,7 @@ class KeybordIME : InputMethodService() {
                 if (ramblerController.toggleTranscriptRevert()) {
                     val raw = ramblerController.isShowingRawTranscript()
                     setRawState(raw)
-                    this@KeybordIME.showRamblerRevertState(raw)
+                    suggestionStripView.showRamblerRevertState(raw)
                 }
             }
             onMagicFixItClicked = {
