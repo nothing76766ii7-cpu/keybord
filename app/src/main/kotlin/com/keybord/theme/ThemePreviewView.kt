@@ -22,6 +22,9 @@ class ThemePreviewView @JvmOverloads constructor(
             invalidate()
         }
 
+    private val effectEngine = KeyboardEffectEngine()
+    private val previewKeyRects = ArrayList<RectF>()
+    private val previewKeyLabels = ArrayList<Pair<String, RectF>>()
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -58,15 +61,15 @@ class ThemePreviewView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
             BackgroundSpec.Type.GRADIENT -> {
-                bgPaint.shader = LinearGradient(
-                    0f, 0f, 0f, height.toFloat(),
-                    theme.keyboardBackground.colorStart,
-                    theme.keyboardBackground.colorEnd,
-                    Shader.TileMode.CLAMP
+                bgPaint.shader = KeyboardEffectEngine.buildBackgroundShader(
+                    theme.keyboardBackground,
+                    width.toFloat(),
+                    height.toFloat()
                 )
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
             BackgroundSpec.Type.IMAGE -> {
+                bgPaint.shader = null
                 bgPaint.color = Color.BLACK
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
@@ -95,16 +98,16 @@ class ThemePreviewView @JvmOverloads constructor(
             )
         }
 
-        // 3. Draw Keys
+        // 3. Layout sample keys cleanly before effect & face passes
         val keyHeight = (theme.keyHeightDp * density).coerceAtMost((height - stripHeight) / 4.5f)
         val cornerRadius = theme.keyCornerRadiusDp * density
         val gapH = theme.keyGapHorizontalDp * density
         val gapV = theme.keyGapVerticalDp * density
+        val borderStrokePx = (theme.keyBorderWidthDp * density).coerceAtLeast(0.5f)
 
         borderPaint.color = theme.keyBorderColor
-        borderPaint.strokeWidth = (theme.keyBorderWidthDp * density).coerceAtLeast(0.5f)
+        borderPaint.strokeWidth = borderStrokePx
 
-        textPaint.color = theme.keyLabelColorPrimary
         textPaint.textSize = (theme.keyLabelSizeSp * density).coerceAtMost(keyHeight * 0.45f)
         textPaint.typeface = theme.keyLabelFont.toTypeface()
 
@@ -112,14 +115,13 @@ class ThemePreviewView @JvmOverloads constructor(
         secondaryTextPaint.textSize = (theme.keyLabelSizeSp * density * 0.65f).coerceAtMost(keyHeight * 0.3f)
         secondaryTextPaint.typeface = theme.keyLabelFont.toTypeface()
 
+        previewKeyRects.clear()
+        previewKeyLabels.clear()
         var currentY = stripHeight + gapV
-
         for (row in sampleRows) {
             val totalGaps = (row.size + 1) * gapH
             val availWidth = width.toFloat() - totalGaps
             var currentX = gapH
-
-            // Check if space row
             val isBottomRow = (row.size == 4)
 
             for (key in row) {
@@ -131,34 +133,68 @@ class ThemePreviewView @JvmOverloads constructor(
                     key == "⇧" || key == "⌫" -> (availWidth / 10f) * 1.4f
                     else -> availWidth / 10f
                 }
-
                 val rect = RectF(currentX, currentY, currentX + keyWidth, currentY + keyHeight)
-
-                // Key Face
-                if (theme.keyFaceColor.isGradient) {
-                    keyPaint.shader = LinearGradient(
-                        rect.left, rect.top, rect.left, rect.bottom,
-                        theme.keyFaceColor.primaryColor,
-                        theme.keyFaceColor.secondaryColor,
-                        Shader.TileMode.CLAMP
-                    )
-                } else {
-                    keyPaint.shader = null
-                    keyPaint.color = theme.keyFaceColor.primaryColor
-                }
-
-                canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
-                if (theme.keyBorderWidthDp > 0f) {
-                    canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
-                }
-
-                // Primary label
-                val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
-                canvas.drawText(key, rect.centerX(), textY, textPaint)
-
+                previewKeyRects.add(rect)
+                previewKeyLabels.add(key to rect)
                 currentX += keyWidth + gapH
             }
             currentY += keyHeight + gapV
+        }
+
+        // Render under-key effects (Ripple rings) before key faces
+        if (theme.effectStyle == EffectStyle.RIPPLE) {
+            effectEngine.drawPreviewEffects(
+                canvas, theme, previewKeyRects, cornerRadius, borderStrokePx, width.toFloat(), height.toFloat()
+            )
+        }
+
+        for ((key, rect) in previewKeyLabels) {
+            val isEnter = key == "Enter"
+            val isFunc = key == "⇧" || key == "⌫" || key == "?123"
+            val overrideColor = when {
+                isEnter -> theme.accentKeyColor
+                isFunc -> theme.functionalKeyColor
+                else -> null
+            }
+
+            if (theme.effectStyle == EffectStyle.CYBER_NEON && theme.keyBorderWidthDp > 0f) {
+                effectEngine.drawStaticCyberGlow(canvas, rect, cornerRadius, theme.keyBorderColor, borderStrokePx)
+            }
+
+            if (overrideColor != null) {
+                keyPaint.shader = null
+                keyPaint.color = overrideColor
+            } else if (theme.keyFaceColor.isGradient) {
+                keyPaint.shader = LinearGradient(
+                    rect.left, rect.top, rect.left, rect.bottom,
+                    theme.keyFaceColor.primaryColor,
+                    theme.keyFaceColor.secondaryColor,
+                    Shader.TileMode.CLAMP
+                )
+            } else {
+                keyPaint.shader = null
+                keyPaint.color = theme.keyFaceColor.primaryColor
+            }
+
+            canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
+            if (theme.keyBorderWidthDp > 0f) {
+                canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
+            }
+
+            textPaint.color = if (isEnter && theme.accentKeyColor != null) {
+                theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
+            } else {
+                theme.keyLabelColorPrimary
+            }
+            val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
+            canvas.drawText(key, rect.centerX(), textY, textPaint)
+        }
+
+        // Render over-key effects (Mech Glow rainbow edge sweep / Key Pulse)
+        if (theme.effectStyle == EffectStyle.MECH_GLOW || theme.effectStyle == EffectStyle.KEY_PULSE) {
+            effectEngine.drawPreviewEffects(
+                canvas, theme, previewKeyRects, cornerRadius, borderStrokePx, width.toFloat(), height.toFloat()
+            )
         }
 
         // 4. Draw Sample Gesture Trail

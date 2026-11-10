@@ -6,15 +6,23 @@ import org.junit.Test
 class ThemeEngineTest {
 
     @Test
-    fun testAllTenBuiltInThemesExistAndValid() {
-        val themes = BuiltInThemes.ALL_BUILT_IN
-        assertEquals("PRD requires exactly 10 built-in themes at launch", 10, themes.size)
+    fun testAllBuiltInAndExtractedThemesExistAndValid() {
+        assertEquals("PRD requires 10 core launch themes", 10, BuiltInThemes.CORE_BUILT_IN.size)
+        assertTrue("Extracted theme collection should be populated", BuiltInThemes.EXTRACTED_THEMES.size >= 40)
 
+        val themes = BuiltInThemes.ALL_BUILT_IN
         val uniqueIds = themes.map { it.id }.toSet()
-        assertEquals("Each built-in theme must have a unique ID", 10, uniqueIds.size)
+        assertEquals("Each built-in/extracted theme must have a unique ID", themes.size, uniqueIds.size)
+
+        val effectStyles = themes.map { it.effectStyle }.toSet()
+        assertTrue(effectStyles.contains(EffectStyle.MECH_GLOW))
+        assertTrue(effectStyles.contains(EffectStyle.RIPPLE))
+        assertTrue(effectStyles.contains(EffectStyle.CYBER_NEON))
+        assertTrue(effectStyles.contains(EffectStyle.KEY_PULSE))
 
         for (theme in themes) {
-            assertTrue("Built-in flag must be true", theme.isBuiltIn)
+            assertTrue("Built-in flag must be true for ${theme.id}", theme.isBuiltIn)
+            assertTrue("Name must not be blank for ${theme.id}", theme.name.isNotBlank())
             assertTrue("keyHeightDp must be within [40..80]", theme.keyHeightDp in 40f..80f)
             assertTrue("keyCornerRadiusDp must be within [0..24]", theme.keyCornerRadiusDp in 0f..24f)
             assertTrue("keyGapHorizontalDp must be within [0..8]", theme.keyGapHorizontalDp in 0f..8f)
@@ -27,12 +35,13 @@ class ThemeEngineTest {
 
     @Test
     fun testThemeJsonRoundTrip() {
-        val original = BuiltInThemes.CYBERPUNK_NEON
+        val original = BuiltInThemes.MECH_GLOW
         val json = ThemeSerializer.toJson(original)
 
         assertNotNull(json)
         assertTrue(json.contains("\"schemaVersion\": 1"))
-        assertTrue(json.contains("\"id\": \"builtin_cyberpunk\""))
+        assertTrue(json.contains("\"id\": \"ext_mech_glow\""))
+        assertTrue(json.contains("\"effectStyle\": \"MECH_GLOW\""))
 
         val restored = ThemeSerializer.fromJson(json)
         assertEquals(original.id, restored.id)
@@ -41,6 +50,30 @@ class ThemeEngineTest {
         assertEquals(original.keyCornerRadiusDp, restored.keyCornerRadiusDp, 0.01f)
         assertEquals(original.trailColor, restored.trailColor)
         assertEquals(original.keyLabelFont, restored.keyLabelFont)
+        assertEquals(EffectStyle.MECH_GLOW, restored.effectStyle)
+        assertEquals(ThemeCategory.EFFECTS, restored.category)
+        assertNotNull(restored.functionalKeyColor)
+        assertNotNull(restored.accentKeyColor)
+    }
+
+    @Test
+    fun testLegacySchemaCompatibilityWithoutEffectFields() {
+        val legacyJson = """
+            {
+                "schemaVersion": 1,
+                "id": "legacy_custom",
+                "name": "Legacy",
+                "geometry": { "keyHeightDp": 52.0 },
+                "surface": {},
+                "gestureTrail": { "trailWidthDp": 10.0, "trailFadeDurationMs": 300 }
+            }
+        """.trimIndent()
+        val parsed = ThemeSerializer.fromJson(legacyJson)
+        assertEquals("legacy_custom", parsed.id)
+        assertEquals(EffectStyle.NONE, parsed.effectStyle)
+        assertNull(parsed.functionalKeyColor)
+        assertNull(parsed.accentKeyColor)
+        assertEquals(ThemeCategory.DARK, parsed.category)
     }
 
     @Test(expected = ThemeValidationException::class)

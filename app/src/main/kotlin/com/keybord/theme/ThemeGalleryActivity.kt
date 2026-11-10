@@ -17,13 +17,15 @@ import androidx.recyclerview.widget.RecyclerView
 import java.io.File
 
 /**
- * Gallery displaying all 10 built-in themes and user-created themes.
+ * Gallery displaying all built-in, extracted, and user-created themes with category filtering.
  * Supports 1-tap activation, theme creation, import and export.
  */
 class ThemeGalleryActivity : AppCompatActivity() {
 
     private lateinit var themeRepo: ThemeRepository
     private lateinit var recyclerView: RecyclerView
+    private lateinit var categoryBar: LinearLayout
+    private var selectedCategory: ThemeCategory = ThemeCategory.ALL
     private val PICK_THEME_FILE_REQUEST = 1001
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -70,6 +72,22 @@ class ThemeGalleryActivity : AppCompatActivity() {
         topBar.addView(createBtn)
         root.addView(topBar)
 
+        // Category Filter Chips
+        categoryBar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            setPadding(0, 0, 0, (10 * dp).toInt())
+        }
+        val categoryScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            addView(categoryBar)
+        }
+        root.addView(categoryScroll)
+        renderCategoryChips()
+
         // Grid of Themes
         recyclerView = RecyclerView(this).apply {
             layoutManager = GridLayoutManager(this@ThemeGalleryActivity, 2)
@@ -88,8 +106,38 @@ class ThemeGalleryActivity : AppCompatActivity() {
         refreshThemes()
     }
 
+    private fun renderCategoryChips() {
+        val dp = resources.displayMetrics.density
+        categoryBar.removeAllViews()
+        for (cat in ThemeCategory.values()) {
+            val isSelected = (cat == selectedCategory)
+            val chip = TextView(this).apply {
+                text = cat.label
+                textSize = 12f
+                setTextColor(if (isSelected) Color.WHITE else Color.parseColor("#B0B4C3"))
+                setBackgroundColor(if (isSelected) Color.parseColor("#4285F4") else Color.parseColor("#1D1F2D"))
+                setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = (8 * dp).toInt() }
+                setOnClickListener {
+                    selectedCategory = cat
+                    renderCategoryChips()
+                    refreshThemes()
+                }
+            }
+            categoryBar.addView(chip)
+        }
+    }
+
     private fun refreshThemes() {
-        val themes = themeRepo.getAllThemes()
+        val allThemes = themeRepo.getAllThemes()
+        val themes = if (selectedCategory == ThemeCategory.ALL) {
+            allThemes
+        } else {
+            allThemes.filter { it.category == selectedCategory || (selectedCategory == ThemeCategory.EFFECTS && it.effectStyle != EffectStyle.NONE) }
+        }
         val activeTheme = themeRepo.getActiveTheme()
 
         recyclerView.adapter = ThemeGridAdapter(
@@ -211,6 +259,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
             val preview: ThemePreviewView,
             val title: TextView,
             val checkBadge: TextView,
+            val effectBadge: TextView,
             val moreBtn: TextView
         ) : RecyclerView.ViewHolder(view)
 
@@ -219,7 +268,7 @@ class ThemeGalleryActivity : AppCompatActivity() {
             val card = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.VERTICAL
                 setBackgroundColor(Color.parseColor("#1B1B26"))
-                layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (170 * dp).toInt()).apply {
+                layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (176 * dp).toInt()).apply {
                     setMargins((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
                 }
                 setPadding((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
@@ -249,6 +298,14 @@ class ThemeGalleryActivity : AppCompatActivity() {
                 layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
             }
 
+            val effectBadge = TextView(parent.context).apply {
+                setTextColor(Color.parseColor("#93C5FD"))
+                setBackgroundColor(Color.parseColor("#243B82F6"))
+                textSize = 10f
+                setPadding((6 * dp).toInt(), (2 * dp).toInt(), (6 * dp).toInt(), (2 * dp).toInt())
+                visibility = View.GONE
+            }
+
             val moreBtn = TextView(parent.context).apply {
                 text = "⋮"
                 setTextColor(Color.parseColor("#AAAAAA"))
@@ -258,12 +315,13 @@ class ThemeGalleryActivity : AppCompatActivity() {
 
             bottomRow.addView(checkBadge)
             bottomRow.addView(title)
+            bottomRow.addView(effectBadge)
             bottomRow.addView(moreBtn)
 
             card.addView(preview)
             card.addView(bottomRow)
 
-            return ViewHolder(card, preview, title, checkBadge, moreBtn)
+            return ViewHolder(card, preview, title, checkBadge, effectBadge, moreBtn)
         }
 
         override fun onBindViewHolder(holder: ViewHolder, position: Int) {
@@ -273,6 +331,12 @@ class ThemeGalleryActivity : AppCompatActivity() {
             holder.preview.theme = theme
             holder.title.text = theme.name
             holder.checkBadge.visibility = if (isActive) View.VISIBLE else View.GONE
+            if (theme.effectStyle != EffectStyle.NONE && theme.effectStyle.badge.isNotEmpty()) {
+                holder.effectBadge.text = theme.effectStyle.badge
+                holder.effectBadge.visibility = View.VISIBLE
+            } else {
+                holder.effectBadge.visibility = View.GONE
+            }
 
             holder.view.setBackgroundColor(
                 if (isActive) Color.parseColor("#253046") else Color.parseColor("#1B1B26")

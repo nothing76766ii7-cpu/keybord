@@ -151,9 +151,10 @@ class CustomThemeEditorActivity : AppCompatActivity() {
             updatePreview()
         }
 
-        // Section: Animations & Previews
-        addSectionHeader(controls, "⚡ Animations")
-        addSwitchControl(controls, "Key Press Ripple", editingTheme.keyPressRippleEnabled) { isChecked ->
+        // Section: Animations & Visual Effects
+        addSectionHeader(controls, "⚡ Animations & Visual Effects")
+        addEffectPicker(controls)
+        addSwitchControl(controls, "Key Press Effects", editingTheme.keyPressRippleEnabled) { isChecked ->
             editingTheme = editingTheme.copy(keyPressRippleEnabled = isChecked)
         }
         addSwitchControl(controls, "Key Pop Preview", editingTheme.keyPopPreviewEnabled) { isChecked ->
@@ -223,31 +224,69 @@ class CustomThemeEditorActivity : AppCompatActivity() {
     }
 
     private fun addFontPicker(parent: LinearLayout) {
+        addOptionChips(
+            parent = parent,
+            options = FontChoice.values().toList(),
+            labelOf = { it.displayName.take(8) },
+            isSelected = { editingTheme.keyLabelFont == it },
+            onSelect = { editingTheme = editingTheme.copy(keyLabelFont = it) }
+        )
+    }
+
+    private fun addEffectPicker(parent: LinearLayout) {
+        addOptionChips(
+            parent = parent,
+            options = EffectStyle.values().toList(),
+            labelOf = { it.displayName },
+            isSelected = { editingTheme.effectStyle == it },
+            onSelect = { editingTheme = editingTheme.copy(effectStyle = it, keyPressRippleEnabled = true) }
+        )
+    }
+
+    private fun <T> addOptionChips(
+        parent: LinearLayout,
+        options: List<T>,
+        labelOf: (T) -> String,
+        isSelected: (T) -> Boolean,
+        onSelect: (T) -> Unit
+    ) {
         val dp = resources.displayMetrics.density
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, (6 * dp).toInt(), 0, (6 * dp).toInt())
         }
-        val fonts = FontChoice.values()
-        for (f in fonts) {
+        val views = mutableListOf<Pair<T, TextView>>()
+        fun refreshChipStyles() {
+            for ((item, tv) in views) {
+                val active = isSelected(item)
+                tv.setTextColor(if (active) Color.WHITE else Color.parseColor("#8888AA"))
+                tv.setBackgroundColor(if (active) Color.parseColor("#4285F4") else Color.parseColor("#1E1E2C"))
+            }
+        }
+        for (option in options) {
             val btn = TextView(this).apply {
-                text = f.displayName.take(8)
+                text = labelOf(option)
                 textSize = 11f
                 setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
-                setTextColor(if (editingTheme.keyLabelFont == f) Color.WHITE else Color.parseColor("#8888AA"))
-                setBackgroundColor(if (editingTheme.keyLabelFont == f) Color.parseColor("#4285F4") else Color.parseColor("#1E1E2C"))
-                val lp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    marginEnd = (4 * dp).toInt()
-                }
-                layoutParams = lp
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { marginEnd = (4 * dp).toInt() }
                 setOnClickListener {
-                    editingTheme = editingTheme.copy(keyLabelFont = f)
+                    onSelect(option)
+                    refreshChipStyles()
                     updatePreview()
                 }
             }
+            views.add(option to btn)
             row.addView(btn)
         }
-        parent.addView(row)
+        refreshChipStyles()
+        val scroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            addView(row)
+        }
+        parent.addView(scroll)
     }
 
     private fun addColorPalette(parent: LinearLayout, label: String, hexes: List<String>, onPick: (String) -> Unit) {

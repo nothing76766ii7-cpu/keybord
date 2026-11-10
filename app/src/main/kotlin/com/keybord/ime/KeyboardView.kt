@@ -49,6 +49,7 @@ class KeyboardView @JvmOverloads constructor(
     var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
         set(value) {
             field = value
+            effectEngine.clear()
             recomputeKeyBounds()
             invalidate()
         }
@@ -60,6 +61,7 @@ class KeyboardView @JvmOverloads constructor(
     var popPreviewView: KeyPopPreviewView? = null
 
     private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+    private val effectEngine = KeyboardEffectEngine()
 
     // Drawing paints
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -216,7 +218,18 @@ class KeyboardView @JvmOverloads constructor(
             currentY += keyHeight + gapV
         }
 
+        val strokePx = kotlin.math.max(1f, theme.keyBorderWidthDp) * density
+        effectEngine.updateKeyGeometry(
+            activeKeys.map { it.bounds },
+            theme.keyCornerRadiusDp * density,
+            strokePx
+        )
         onKeyPositionsChanged?.invoke(HashMap(keyPositions))
+    }
+
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        effectEngine.clear()
     }
 
     fun getKeyPositions(): Map<Char, KeyPosition> = HashMap(keyPositions)
@@ -233,6 +246,10 @@ class KeyboardView @JvmOverloads constructor(
         invalidate()
     }
 
+    private fun isFunctionalKey(key: KeyDef): Boolean {
+        return key.code == "⇧" || key.code == "⌫" || key.code == "?123" || key.code == "ABC" || key.code == "=\\<"
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val density = resources.displayMetrics.density
@@ -245,25 +262,27 @@ class KeyboardView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
             BackgroundSpec.Type.GRADIENT -> {
-                bgPaint.shader = LinearGradient(
-                    0f, 0f, 0f, height.toFloat(),
-                    theme.keyboardBackground.colorStart,
-                    theme.keyboardBackground.colorEnd,
-                    Shader.TileMode.CLAMP
+                bgPaint.shader = KeyboardEffectEngine.buildBackgroundShader(
+                    theme.keyboardBackground,
+                    width.toFloat(),
+                    height.toFloat()
                 )
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
             BackgroundSpec.Type.IMAGE -> {
+                bgPaint.shader = null
                 bgPaint.color = Color.BLACK
                 canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
             }
         }
 
-        val cornerRadius = theme.keyCornerRadiusDp * density
-        borderPaint.color = theme.keyBorderColor
-        borderPaint.strokeWidth = theme.keyBorderWidthDp * density
+        val hasUnderEffect = effectEngine.drawUnderKeys(canvas, theme, width.toFloat())
 
-        textPaint.color = theme.keyLabelColorPrimary
+        val cornerRadius = theme.keyCornerRadiusDp * density
+        val borderStrokePx = theme.keyBorderWidthDp * density
+        borderPaint.color = theme.keyBorderColor
+        borderPaint.strokeWidth = borderStrokePx
+
         textPaint.textSize = theme.keyLabelSizeSp * density
         textPaint.typeface = theme.keyLabelFont.toTypeface()
 
@@ -275,9 +294,25 @@ class KeyboardView @JvmOverloads constructor(
 
         for (key in activeKeys) {
             val rect = key.bounds
+            val isEnter = key.code == "Enter"
+            val isFunc = isFunctionalKey(key)
 
-            // Key Face Fill
-            if (theme.keyFaceColor.isGradient) {
+            if (theme.effectStyle == EffectStyle.CYBER_NEON && theme.keyBorderWidthDp > 0f) {
+                effectEngine.drawStaticCyberGlow(
+                    canvas, rect, cornerRadius, theme.keyBorderColor, borderStrokePx
+                )
+            }
+
+            // Key Face Fill (respecting accent Enter key and functional key roles)
+            val overrideColor = when {
+                isEnter -> theme.accentKeyColor
+                isFunc -> theme.functionalKeyColor
+                else -> null
+            }
+            if (overrideColor != null) {
+                keyPaint.shader = null
+                keyPaint.color = overrideColor
+            } else if (theme.keyFaceColor.isGradient) {
                 keyPaint.shader = LinearGradient(
                     rect.left, rect.top, rect.left, rect.bottom,
                     theme.keyFaceColor.primaryColor,
@@ -302,6 +337,11 @@ class KeyboardView @JvmOverloads constructor(
             }
 
             // Key Text Label
+            textPaint.color = if (isEnter && theme.accentKeyColor != null) {
+                theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
+            } else {
+                theme.keyLabelColorPrimary
+            }
             val displayText = getDisplayText(key)
             val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
             canvas.drawText(displayText, rect.centerX(), textY, textPaint)
@@ -312,6 +352,12 @@ class KeyboardView @JvmOverloads constructor(
                 val secY = rect.top + (12f * density)
                 canvas.drawText(key.secondaryCode, secX, secY, secondaryTextPaint)
             }
+        }
+
+        val overStrokePx = kotlin.math.max(1.25f, theme.keyBorderWidthDp) * density
+        val hasOverEffect = effectEngine.drawOverKeys(canvas, theme, width.toFloat(), overStrokePx)
+        if (hasUnderEffect || hasOverEffect) {
+            postInvalidateOnAnimation()
         }
     }
 
@@ -350,6 +396,13 @@ class KeyboardView @JvmOverloads constructor(
                 pressedKey?.let { key ->
                     triggerHapticFeedback()
                     popPreviewView?.show(getDisplayText(key), key.bounds)
+                    effectEngine.triggerKeyPress(
+                        key.bounds.centerX(),
+                        key.bounds.centerY(),
+                        key.bounds,
+                        theme,
+                        width.toFloat()
+                    )
                 }
                 invalidate()
                 return true

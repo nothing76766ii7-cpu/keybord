@@ -4,9 +4,229 @@ import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 
 /**
- * 10 Built-in launch themes shipped with Keybord v1.0.
+ * Built-in themes shipped with Keybord: 10 core launch themes plus the complete
+ * extracted collection of themes and animated visual effects.
  */
 object BuiltInThemes {
+
+    private fun c(hex: String): Int = Color.parseColor(hex)
+
+    private fun solidExtracted(
+        id: String,
+        name: String,
+        category: ThemeCategory,
+        surfaceHex: String,
+        keyHex: String,
+        funcHex: String,
+        accentHex: String,
+        primaryTextHex: String,
+        secondaryTextHex: String,
+        borderHex: String,
+        trailHex: String,
+        accentTextHex: String? = null,
+        borderWidthDp: Float = 1f,
+        cornerRadiusDp: Float = 6f,
+        effectStyle: EffectStyle = EffectStyle.NONE,
+        font: FontChoice = FontChoice.ROBOTO
+    ): ThemeModel {
+        val bg = c(surfaceHex)
+        val keyCol = c(keyHex)
+        val fnCol = c(funcHex)
+        val accCol = c(accentHex)
+        val txtPrimary = c(primaryTextHex)
+        val accTxt = accentTextHex?.let { c(it) }
+            ?: if (Color.luminance(accCol) > 0.55f) Color.BLACK else Color.WHITE
+        val isLightSurface = Color.luminance(bg) > 0.5f
+        val stripBg = if (isLightSurface) {
+            Color.rgb(
+                (Color.red(bg) * 0.96f).toInt().coerceIn(0, 255),
+                (Color.green(bg) * 0.96f).toInt().coerceIn(0, 255),
+                (Color.blue(bg) * 0.96f).toInt().coerceIn(0, 255)
+            )
+        } else {
+            bg
+        }
+        val stripText = if (isLightSurface) c("#FF1C1E21") else Color.WHITE
+        val pressHighlight = if (isLightSurface) c("#24000000") else c("#38FFFFFF")
+
+        return ThemeModel(
+            id = id,
+            name = name,
+            isBuiltIn = true,
+            keyHeightDp = 54f,
+            keyCornerRadiusDp = cornerRadiusDp,
+            keyGapHorizontalDp = 4f,
+            keyGapVerticalDp = 6f,
+            bottomPaddingDp = 12f,
+            keyFaceColor = ColorSpec.solid(keyCol),
+            keyBorderColor = c(borderHex),
+            keyBorderWidthDp = borderWidthDp,
+            keyPressHighlightColor = pressHighlight,
+            keyboardBackground = BackgroundSpec.solid(bg),
+            suggestionStripBgColor = stripBg,
+            suggestionStripTextColor = stripText,
+            keyLabelColorPrimary = txtPrimary,
+            keyLabelColorSecondary = c(secondaryTextHex),
+            keyLabelFont = font,
+            keyLabelSizeSp = 16f,
+            trailColor = c(trailHex),
+            trailWidthDp = 12f,
+            trailFadeDurationMs = 340L,
+            keyPressRippleEnabled = true,
+            keyPopPreviewEnabled = true,
+            keyPopPreviewSize = PopPreviewSize.MEDIUM,
+            functionalKeyColor = fnCol,
+            accentKeyColor = accCol,
+            accentKeyTextColor = accTxt,
+            effectStyle = effectStyle,
+            category = category
+        )
+    }
+
+    private fun cyberTheme(
+        id: String,
+        name: String,
+        rgbHex: String // e.g. "00E5FF"
+    ): ThemeModel {
+        val neon = c("#FF$rgbHex")
+        return ThemeModel(
+            id = id,
+            name = name,
+            isBuiltIn = true,
+            keyHeightDp = 54f,
+            keyCornerRadiusDp = 6f,
+            keyGapHorizontalDp = 4f,
+            keyGapVerticalDp = 6f,
+            bottomPaddingDp = 12f,
+            keyFaceColor = ColorSpec.solid(c("#1A$rgbHex")),
+            keyBorderColor = c("#4D$rgbHex"),
+            keyBorderWidthDp = 1f,
+            keyPressHighlightColor = c("#4D$rgbHex"),
+            keyboardBackground = BackgroundSpec.solid(c("#FF0A0E17")),
+            suggestionStripBgColor = c("#FF080C14"),
+            suggestionStripTextColor = neon,
+            keyLabelColorPrimary = neon,
+            keyLabelColorSecondary = c("#80FFFFFF"),
+            keyLabelFont = FontChoice.JETBRAINS_MONO,
+            keyLabelSizeSp = 15.5f,
+            trailColor = neon,
+            trailWidthDp = 12f,
+            trailFadeDurationMs = 420L,
+            keyPressRippleEnabled = true,
+            keyPopPreviewEnabled = true,
+            keyPopPreviewSize = PopPreviewSize.MEDIUM,
+            functionalKeyColor = c("#0D$rgbHex"),
+            accentKeyColor = neon,
+            accentKeyTextColor = c("#FF0A0E17"),
+            effectStyle = EffectStyle.CYBER_NEON,
+            category = ThemeCategory.CYBER
+        )
+    }
+
+    private fun effectTheme(
+        id: String,
+        name: String,
+        isLight: Boolean,
+        effectStyle: EffectStyle,
+        palette: List<Int> = emptyList()
+    ): ThemeModel {
+        val trail = if (isLight) c("#FF3B82F6") else c("#FF38BDF8")
+        return ThemeModel(
+            id = id,
+            name = name,
+            isBuiltIn = true,
+            keyHeightDp = 54f,
+            keyCornerRadiusDp = 6f,
+            keyGapHorizontalDp = 4f,
+            keyGapVerticalDp = 6f,
+            bottomPaddingDp = 12f,
+            keyFaceColor = ColorSpec.solid(if (isLight) c("#FFFFFFFF") else c("#1FFFFFFF")),
+            keyBorderColor = if (isLight) c("#1A000000") else c("#33FFFFFF"),
+            keyBorderWidthDp = if (effectStyle == EffectStyle.MECH_GLOW) 1.25f else 1f,
+            keyPressHighlightColor = if (isLight) c("#24000000") else c("#33FFFFFF"),
+            keyboardBackground = BackgroundSpec.solid(if (isLight) c("#FFE6EAED") else c("#FF030303")),
+            suggestionStripBgColor = if (isLight) c("#FFDCE1E6") else c("#FF050507"),
+            suggestionStripTextColor = if (isLight) Color.BLACK else Color.WHITE,
+            keyLabelColorPrimary = if (isLight) Color.BLACK else Color.WHITE,
+            keyLabelColorSecondary = if (isLight) c("#80000000") else c("#80FFFFFF"),
+            keyLabelFont = FontChoice.ROBOTO,
+            keyLabelSizeSp = 16f,
+            trailColor = trail,
+            trailWidthDp = 12f,
+            trailFadeDurationMs = 360L,
+            keyPressRippleEnabled = true,
+            keyPopPreviewEnabled = true,
+            keyPopPreviewSize = PopPreviewSize.MEDIUM,
+            functionalKeyColor = if (isLight) c("#FFCBCFD6") else c("#12FFFFFF"),
+            accentKeyColor = trail,
+            accentKeyTextColor = if (isLight) Color.WHITE else c("#FF030303"),
+            effectStyle = effectStyle,
+            effectColors = palette,
+            category = ThemeCategory.EFFECTS
+        )
+    }
+
+    private fun gradientExtracted(
+        id: String,
+        name: String,
+        topSectionHex: String,
+        startHex: String,
+        endHex: String,
+        midHex: String? = null,
+        isLightText: Boolean = true,
+        accentHex: String = topSectionHex,
+        angleDeg: Float = 135f
+    ): ThemeModel {
+        val bgSpec = if (midHex != null) {
+            BackgroundSpec.gradient(c(startHex), c(midHex), c(endHex), angleDeg)
+        } else {
+            BackgroundSpec.gradient(c(startHex), c(endHex), angleDeg)
+        }
+        val keyFill = if (isLightText) c("#2EFFFFFF") else c("#B8FFFFFF")
+        val fnFill = if (isLightText) c("#1AFFFFFF") else c("#8AFFFFFF")
+        val border = if (isLightText) c("#28FFFFFF") else c("#20000000")
+        val textPrimary = if (isLightText) Color.WHITE else c("#FF1E1E24")
+        val textSecondary = if (isLightText) c("#A8FFFFFF") else c("#80000000")
+        val accCol = c(accentHex)
+        val accText = if (Color.luminance(accCol) > 0.55f) Color.BLACK else Color.WHITE
+        val topCol = c(topSectionHex)
+        val stripText = if (Color.luminance(topCol) > 0.55f) c("#FF1E1E24") else Color.WHITE
+
+        return ThemeModel(
+            id = id,
+            name = name,
+            isBuiltIn = true,
+            keyHeightDp = 54f,
+            keyCornerRadiusDp = 8f,
+            keyGapHorizontalDp = 4f,
+            keyGapVerticalDp = 6f,
+            bottomPaddingDp = 12f,
+            keyFaceColor = ColorSpec.solid(keyFill),
+            keyBorderColor = border,
+            keyBorderWidthDp = 1f,
+            keyPressHighlightColor = if (isLightText) c("#44FFFFFF") else c("#26000000"),
+            keyboardBackground = bgSpec,
+            suggestionStripBgColor = topCol,
+            suggestionStripTextColor = stripText,
+            keyLabelColorPrimary = textPrimary,
+            keyLabelColorSecondary = textSecondary,
+            keyLabelFont = FontChoice.INTER,
+            keyLabelSizeSp = 16f,
+            trailColor = if (isLightText) c(endHex) else accCol,
+            trailWidthDp = 12f,
+            trailFadeDurationMs = 360L,
+            keyPressRippleEnabled = true,
+            keyPopPreviewEnabled = true,
+            keyPopPreviewSize = PopPreviewSize.MEDIUM,
+            functionalKeyColor = fnFill,
+            accentKeyColor = accCol,
+            accentKeyTextColor = accText,
+            effectStyle = EffectStyle.NONE,
+            category = ThemeCategory.GRADIENTS
+        )
+    }
+
+    // ==================== Original Core Built-In Themes ====================
 
     val MATERIAL_MIDNIGHT = ThemeModel(
         id = "builtin_midnight",
@@ -33,7 +253,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 350L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.DARK
     )
 
     val CLEAN_PORCELAIN = ThemeModel(
@@ -61,7 +282,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 300L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.LIGHT
     )
 
     val CYBERPUNK_NEON = ThemeModel(
@@ -93,7 +315,9 @@ object BuiltInThemes {
         trailFadeDurationMs = 450L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.LARGE
+        keyPopPreviewSize = PopPreviewSize.LARGE,
+        effectStyle = EffectStyle.CYBER_NEON,
+        category = ThemeCategory.CYBER
     )
 
     val NORD_FROST = ThemeModel(
@@ -121,7 +345,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 320L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.DARK
     )
 
     val DRACULA_NIGHT = ThemeModel(
@@ -149,7 +374,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 350L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.DARK
     )
 
     val RETRO_TERMINAL = ThemeModel(
@@ -177,7 +403,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 280L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.SMALL
+        keyPopPreviewSize = PopPreviewSize.SMALL,
+        category = ThemeCategory.DARK
     )
 
     val SUNSET_GRADIENT = ThemeModel(
@@ -212,7 +439,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 400L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.GRADIENTS
     )
 
     val FOREST_MOSS = ThemeModel(
@@ -240,7 +468,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 350L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.COLORFUL
     )
 
     val AMOLED_ONYX = ThemeModel(
@@ -268,7 +497,8 @@ object BuiltInThemes {
         trailFadeDurationMs = 300L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.DARK
     )
 
     val LAVENDER_DREAM = ThemeModel(
@@ -296,10 +526,229 @@ object BuiltInThemes {
         trailFadeDurationMs = 360L,
         keyPressRippleEnabled = true,
         keyPopPreviewEnabled = true,
-        keyPopPreviewSize = PopPreviewSize.MEDIUM
+        keyPopPreviewSize = PopPreviewSize.MEDIUM,
+        category = ThemeCategory.LIGHT
     )
 
-    val ALL_BUILT_IN = listOf(
+    // ==================== Extracted Visual Effect Themes ====================
+
+    val RIPPLE_DARK = effectTheme("ext_ripple_dark", "Ripple Dark", isLight = false, EffectStyle.RIPPLE, KeyboardEffectEngine.RIPPLE_DARK_PALETTE)
+    val RIPPLE_LIGHT = effectTheme("ext_ripple_light", "Ripple Light", isLight = true, EffectStyle.RIPPLE, KeyboardEffectEngine.RIPPLE_LIGHT_PALETTE)
+    val MECH_GLOW = effectTheme("ext_mech_glow", "Mech Glow", isLight = false, EffectStyle.MECH_GLOW)
+    val MECH_GLOW_LIGHT = effectTheme("ext_mech_glow_light", "Mech Glow Light", isLight = true, EffectStyle.MECH_GLOW)
+
+    // ==================== Extracted Cyber Neon Themes ====================
+
+    val CYBER_CYAN = cyberTheme("ext_cyber_cyan", "Cyber Cyan", "00E5FF")
+    val CYBER_GREEN = cyberTheme("ext_cyber_green", "Cyber Green", "00FF9C")
+    val CYBER_ORANGE = cyberTheme("ext_cyber_orange", "Cyber Orange", "FF8C00")
+    val CYBER_RED = cyberTheme("ext_cyber_red", "Cyber Red", "FF2A6D")
+    val CYBER_YELLOW = cyberTheme("ext_cyber_yellow", "Cyber Yellow", "FFE600")
+
+    // ==================== Extracted Light & Classic Themes ====================
+
+    val CLASSIC = solidExtracted(
+        "ext_classic", "Classic", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#FFCBCFD6", "#FF616466",
+        "#FF000000", "#80000000", "#1A000000", "#FF616466", accentTextHex = "#FFFFFFFF"
+    )
+    val CLASSIC_BORDERLESS = solidExtracted(
+        "ext_classic_borderless", "Classic Minimal", ThemeCategory.LIGHT,
+        "#FFF8F9FA", "#FFCBCFD6", "#FFBDC2CA", "#FF616466",
+        "#FF000000", "#80000000", "#00000000", "#FF616466", accentTextHex = "#FFFFFFFF", borderWidthDp = 0f
+    )
+    val IPHONE_CLASSIC = solidExtracted(
+        "ext_iphone", "iOS Clean", ThemeCategory.LIGHT,
+        "#FFD2D5DB", "#FFFFFFFF", "#FFAFB5BE", "#FF000000",
+        "#FF000000", "#80000000", "#1A000000", "#FF000000", accentTextHex = "#FFFFFFFF"
+    )
+    val DESH_LIGHT = solidExtracted(
+        "ext_desh_light", "Emerald Light", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#1A087A50", "#FF4C8179",
+        "#FF000000", "#80000000", "#1A000000", "#FF4C8179"
+    )
+    val MANGLISH_LIGHT = solidExtracted(
+        "ext_manglish_light", "Sage Light", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#335F9154", "#FF6E9A65",
+        "#FF000000", "#80000000", "#1A000000", "#FF6E9A65"
+    )
+    val FUTURISTIC = solidExtracted(
+        "ext_futuristic", "Futuristic Pulse", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#FFCBCFD6", "#FF1A73E8",
+        "#FF000000", "#80000000", "#1A000000", "#FF1A73E8", effectStyle = EffectStyle.KEY_PULSE
+    )
+    val PREMIUM_TEAL = solidExtracted(
+        "ext_premium", "Premium Teal", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#1A000000", "#FF26A69A",
+        "#FF000000", "#80000000", "#1A000000", "#FF26A69A"
+    )
+    val FUNKY_CORAL = solidExtracted(
+        "ext_funky", "Funky Coral", ThemeCategory.LIGHT,
+        "#FFE6EAED", "#FFFFFFFF", "#FFEDD0D3", "#FFF45B69",
+        "#FF000000", "#80000000", "#1A000000", "#FFF45B69"
+    )
+
+    // ==================== Extracted Dark & Moody Themes ====================
+
+    val DESH_DARK = solidExtracted(
+        "ext_desh_dark", "Deep Pine Dark", ThemeCategory.DARK,
+        "#FF0B1A19", "#1AFFFFFF", "#08FFFFFF", "#FF4C8179",
+        "#FFFFFFFF", "#80FFFFFF", "#1AFFFFFF", "#FF73B9AE"
+    )
+    val DARK_OLIVE = solidExtracted(
+        "ext_dark", "Dark Olive", ThemeCategory.DARK,
+        "#FF161616", "#1AFFFFFF", "#0DFFFFFF", "#FF6E9A65",
+        "#FFFFFFFF", "#80FFFFFF", "#1AFFFFFF", "#FF6E9A65"
+    )
+    val BLACK_PITCH = solidExtracted(
+        "ext_black", "Pitch Black", ThemeCategory.DARK,
+        "#FF030303", "#1FFFFFFF", "#12FFFFFF", "#FF383838",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF"
+    )
+    val TRANSPARENT_DARK = solidExtracted(
+        "ext_transparent_dark", "Glass Dark", ThemeCategory.DARK,
+        "#FF161616", "#40FFFFFF", "#26FFFFFF", "#FF52525B",
+        "#FFFFFFFF", "#80FFFFFF", "#1AFFFFFF", "#FFFFFFFF"
+    )
+    val NIGHT_MINT = solidExtracted(
+        "ext_night", "Night Mint", ThemeCategory.DARK,
+        "#FF2F2F2F", "#1AFFFFFF", "#08FFFFFF", "#FF4ED383",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FF4ED383", accentTextHex = "#FF0E2918"
+    )
+    val AUTUMN_SLATE = solidExtracted(
+        "ext_autumn", "Autumn Slate", ThemeCategory.DARK,
+        "#FF37363D", "#1AFFFFFF", "#08FFFFFF", "#FFE3874F",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFE3874F", accentTextHex = "#FF1E140E"
+    )
+    val HAUNTED_CRIMSON = solidExtracted(
+        "ext_haunted", "Haunted Crimson", ThemeCategory.DARK,
+        "#FF2C2C2C", "#12FFFFFF", "#08FFFFFF", "#FFC62828",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFC62828"
+    )
+    val SHADOW_SLATE = solidExtracted(
+        "ext_shadow", "Shadow Slate", ThemeCategory.DARK,
+        "#FF273238", "#1AFFFFFF", "#0DFFFFFF", "#FF455A64",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF"
+    )
+    val SERENE_SLATE = solidExtracted(
+        "ext_serene", "Serene Blue-Grey", ThemeCategory.DARK,
+        "#FF455A64", "#1AFFFFFF", "#0DFFFFFF", "#FF607D8B",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF"
+    )
+
+    // ==================== Extracted Colorful Vivid Themes ====================
+
+    val COBALT_BLUE = solidExtracted(
+        "ext_cobalt", "Cobalt", ThemeCategory.COLORFUL,
+        "#FF1565C0", "#40FFFFFF", "#1AFFFFFF", "#FF0D47A1",
+        "#FFFFFFFF", "#80FFFFFF", "#1AFFFFFF", "#FFFFFFFF"
+    )
+    val GREEN_EMERALD = solidExtracted(
+        "ext_green", "Emerald Pulse", ThemeCategory.COLORFUL,
+        "#FF2E7D32", "#40FFFFFF", "#1AFFFFFF", "#FF1B5E20",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF", effectStyle = EffectStyle.KEY_PULSE
+    )
+    val RED_CRIMSON = solidExtracted(
+        "ext_red", "Crimson Red", ThemeCategory.COLORFUL,
+        "#FFC62828", "#40FFFFFF", "#1AFFFFFF", "#FF8E0000",
+        "#FFFFFFFF", "#80FFFFFF", "#1AFFFFFF", "#FFFFFFFF"
+    )
+    val ASCEND_MAGENTA = solidExtracted(
+        "ext_ascend", "Ascend Magenta", ThemeCategory.COLORFUL,
+        "#FFAD1457", "#40FFFFFF", "#1AFFFFFF", "#FF78002E",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF"
+    )
+    val BLUEGREEN_TEAL = solidExtracted(
+        "ext_bluegreen", "Bluegreen", ThemeCategory.COLORFUL,
+        "#FF26A69A", "#4DFFFFFF", "#1AFFFFFF", "#FF00766C",
+        "#FFFFFFFF", "#80FFFFFF", "#33FFFFFF", "#FFFFFFFF"
+    )
+
+    // ==================== Extracted High Contrast Accessibility Themes ====================
+
+    val HC_YELLOW = solidExtracted(
+        "ext_hc_yellow", "High Contrast Yellow", ThemeCategory.HIGH_CONTRAST,
+        "#FF2C303F", "#FFFFFFFF", "#FFF0E442", "#FFF0E442",
+        "#FF000000", "#FF4A4E5A", "#33FFFFFF", "#FFF0E442", accentTextHex = "#FF000000"
+    )
+    val HC_BLUE = solidExtracted(
+        "ext_hc_blue", "High Contrast Cyan", ThemeCategory.HIGH_CONTRAST,
+        "#FF2C303F", "#FFFFFFFF", "#FF00FFFF", "#FF00FFFF",
+        "#FF000000", "#FF4A4E5A", "#33FFFFFF", "#FF00FFFF", accentTextHex = "#FF000000"
+    )
+
+    // ==================== Extracted Gradient & Atmospheric Themes ====================
+
+    val GRADIENT_EMERALD = gradientExtracted(
+        "ext_gradient", "Aqua Emerald", "#FF01764F",
+        "#FF20E2AD", "#FF0EB9DD", midHex = "#FF17CEC5", isLightText = true, angleDeg = 90f
+    )
+    val GRADIENT_MYSTIC_GREEN = gradientExtracted(
+        "ext_gradient_1", "Mystic Green", "#FF216241",
+        "#FF3FB878", "#FF48CE9B", midHex = "#FF42BE82", isLightText = true
+    )
+    val GRADIENT_CORAL_GREEN = gradientExtracted(
+        "ext_gradient_2", "Coral Cyan", "#FF027372",
+        "#FF05E8D9", "#FF00D6CB", midHex = "#FF01E0D7", isLightText = false, accentHex = "#FF027372"
+    )
+    val GRADIENT_PURPLE_PINK = gradientExtracted(
+        "ext_gradient_4", "Purple Pink", "#FF1E042E",
+        "#FF37026F", "#FFF100D0", midHex = "#FF861BAF", isLightText = true, accentHex = "#FFF100D0"
+    )
+    val GRADIENT_SPECTRUM = gradientExtracted(
+        "ext_gradient_5", "Spectrum Flare", "#FF15004D",
+        "#FF7902C9", "#FFE84719", midHex = "#FF721076", isLightText = true, accentHex = "#FFE84719"
+    )
+    val GRADIENT_BLUISH = gradientExtracted(
+        "ext_gradient_6", "Deep Bluish", "#FF174A68",
+        "#FF238DCE", "#FF021C7F", midHex = "#FF0250AC", isLightText = true, accentHex = "#FF238DCE"
+    )
+    val GRADIENT_AURA_PASTEL = gradientExtracted(
+        "ext_gradient_7", "Aura Pastel", "#FF826B6C",
+        "#FFFAD2D2", "#FFCDE9E8", midHex = "#FFEBD6C0", isLightText = false, accentHex = "#FF826B6C"
+    )
+    val GRADIENT_BLUE_PINK = gradientExtracted(
+        "ext_gradient_8", "Pastel Lavender", "#FF465975",
+        "#FFB1EAFE", "#FFD9B6FE", midHex = "#FFCAD0FE", isLightText = false, accentHex = "#FF465975"
+    )
+    val GRADIENT_SAKURA_PINK = gradientExtracted(
+        "ext_gradient_9", "Sakura Pink", "#FF7F507F",
+        "#FFFE9FFA", "#FFFD79D9", midHex = "#FFFE9AF8", isLightText = false, accentHex = "#FF7F507F"
+    )
+    val GRADIENT_ABSTRACT_AURA = gradientExtracted(
+        "ext_abstract", "Abstract Prism", "#FF763A7D",
+        "#FFE662F5", "#FF245189", midHex = "#FF4A5898", isLightText = true, accentHex = "#FF9B51E0"
+    )
+    val GRADIENT_FROSTED_GLASS = gradientExtracted(
+        "ext_frosted_glass", "Frosted Glass", "#FF141416",
+        "#FF4A4C52", "#FF12161A", midHex = "#FF2C3033", isLightText = true, accentHex = "#FF6B7280", angleDeg = 90f
+    )
+    val GRADIENT_MODERN_ART = gradientExtracted(
+        "ext_modern_art", "Modern Art", "#FF00193A",
+        "#FF135A83", "#FF694C3B", midHex = "#FF3A6961", isLightText = true, accentHex = "#FF135A83"
+    )
+    val GRADIENT_STARS = gradientExtracted(
+        "ext_stars", "Starry Teal", "#FF031515",
+        "#FF012A33", "#FF039DB8", midHex = "#FF025B6D", isLightText = true, accentHex = "#FF039DB8", angleDeg = 90f
+    )
+    val GRADIENT_OCEAN = gradientExtracted(
+        "ext_ocean", "Ocean Horizon", "#FF021E21",
+        "#FF28797D", "#FFE3BFB1", midHex = "#FFA7B4B8", isLightText = false, accentHex = "#FF28797D", angleDeg = 90f
+    )
+    val GRADIENT_BLOSSOM = gradientExtracted(
+        "ext_flower", "Blossom Ember", "#FF361608",
+        "#FF8E4826", "#FF1B1515", midHex = "#FF2F201A", isLightText = true, accentHex = "#FF8E4826", angleDeg = 90f
+    )
+    val GRADIENT_TURQUOISE_WALL = gradientExtracted(
+        "ext_turquoise_wall", "Turquoise Wall", "#FF24504A",
+        "#FF3AA298", "#FF579F96", midHex = "#FF3BA199", isLightText = true, accentHex = "#FF24504A"
+    )
+    val GRADIENT_CHETAK_OBSIDIAN = gradientExtracted(
+        "ext_chetak", "Obsidian Bronze", "#FF000000",
+        "#FF0E0C0B", "#FF3D332F", midHex = "#FF342C28", isLightText = true, accentHex = "#FF6A5C53"
+    )
+
+    val CORE_BUILT_IN = listOf(
         MATERIAL_MIDNIGHT,
         CLEAN_PORCELAIN,
         CYBERPUNK_NEON,
@@ -311,6 +760,68 @@ object BuiltInThemes {
         AMOLED_ONYX,
         LAVENDER_DREAM
     )
+
+    val EXTRACTED_THEMES = listOf(
+        // Visual Effects first so users discover animated effects immediately
+        MECH_GLOW,
+        MECH_GLOW_LIGHT,
+        RIPPLE_DARK,
+        RIPPLE_LIGHT,
+        // Cyber Neon series
+        CYBER_CYAN,
+        CYBER_GREEN,
+        CYBER_ORANGE,
+        CYBER_RED,
+        CYBER_YELLOW,
+        // Light & Classic
+        CLASSIC,
+        CLASSIC_BORDERLESS,
+        IPHONE_CLASSIC,
+        DESH_LIGHT,
+        MANGLISH_LIGHT,
+        FUTURISTIC,
+        PREMIUM_TEAL,
+        FUNKY_CORAL,
+        // Dark & Moody
+        DESH_DARK,
+        DARK_OLIVE,
+        BLACK_PITCH,
+        TRANSPARENT_DARK,
+        NIGHT_MINT,
+        AUTUMN_SLATE,
+        HAUNTED_CRIMSON,
+        SHADOW_SLATE,
+        SERENE_SLATE,
+        // Colorful Vivid
+        COBALT_BLUE,
+        GREEN_EMERALD,
+        RED_CRIMSON,
+        ASCEND_MAGENTA,
+        BLUEGREEN_TEAL,
+        // High Contrast
+        HC_YELLOW,
+        HC_BLUE,
+        // Gradients & Atmospheric
+        GRADIENT_EMERALD,
+        GRADIENT_MYSTIC_GREEN,
+        GRADIENT_CORAL_GREEN,
+        GRADIENT_PURPLE_PINK,
+        GRADIENT_SPECTRUM,
+        GRADIENT_BLUISH,
+        GRADIENT_AURA_PASTEL,
+        GRADIENT_BLUE_PINK,
+        GRADIENT_SAKURA_PINK,
+        GRADIENT_ABSTRACT_AURA,
+        GRADIENT_FROSTED_GLASS,
+        GRADIENT_MODERN_ART,
+        GRADIENT_STARS,
+        GRADIENT_OCEAN,
+        GRADIENT_BLOSSOM,
+        GRADIENT_TURQUOISE_WALL,
+        GRADIENT_CHETAK_OBSIDIAN
+    )
+
+    val ALL_BUILT_IN = CORE_BUILT_IN + EXTRACTED_THEMES
 
     fun getById(id: String): ThemeModel {
         return ALL_BUILT_IN.find { it.id == id } ?: MATERIAL_MIDNIGHT

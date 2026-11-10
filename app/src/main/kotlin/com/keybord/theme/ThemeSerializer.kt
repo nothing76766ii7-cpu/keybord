@@ -56,11 +56,16 @@ object ThemeSerializer {
         bg.put("type", theme.keyboardBackground.type.name)
         bg.put("colorStart", String.format("#%08X", theme.keyboardBackground.colorStart))
         bg.put("colorEnd", String.format("#%08X", theme.keyboardBackground.colorEnd))
+        theme.keyboardBackground.colorMid?.let { bg.put("colorMid", String.format("#%08X", it)) }
+        bg.put("gradientAngleDeg", theme.keyboardBackground.gradientAngleDeg.toDouble())
         if (theme.keyboardBackground.imageUri != null) {
             bg.put("imageUri", theme.keyboardBackground.imageUri)
         }
         surface.put("keyboardBackground", bg)
 
+        theme.functionalKeyColor?.let { surface.put("functionalKeyColor", String.format("#%08X", it)) }
+        theme.accentKeyColor?.let { surface.put("accentKeyColor", String.format("#%08X", it)) }
+        theme.accentKeyTextColor?.let { surface.put("accentKeyTextColor", String.format("#%08X", it)) }
         surface.put("suggestionStripBgColor", String.format("#%08X", theme.suggestionStripBgColor))
         surface.put("suggestionStripTextColor", String.format("#%08X", theme.suggestionStripTextColor))
         surface.put("keyLabelColorPrimary", String.format("#%08X", theme.keyLabelColorPrimary))
@@ -76,12 +81,19 @@ object ThemeSerializer {
         trail.put("trailFadeDurationMs", theme.trailFadeDurationMs)
         root.put("gestureTrail", trail)
 
-        // Animations
+        // Animations & Visual Effects
         val anim = JSONObject()
         anim.put("keyPressRippleEnabled", theme.keyPressRippleEnabled)
         anim.put("keyPopPreviewEnabled", theme.keyPopPreviewEnabled)
         anim.put("keyPopPreviewSize", theme.keyPopPreviewSize.name)
+        anim.put("effectStyle", theme.effectStyle.name)
+        if (theme.effectColors.isNotEmpty()) {
+            val arr = org.json.JSONArray()
+            theme.effectColors.forEach { arr.put(String.format("#%08X", it)) }
+            anim.put("effectColors", arr)
+        }
         root.put("animations", anim)
+        root.put("category", theme.category.name)
 
         return root.toString(2)
     }
@@ -176,12 +188,17 @@ object ThemeSerializer {
             val type = try { BackgroundSpec.Type.valueOf(typeName) } catch (e: Exception) { BackgroundSpec.Type.SOLID }
             val cStart = parseColorSafe(bgObj.optString("colorStart"), Color.parseColor("#12121A"))
             val cEnd = parseColorSafe(bgObj.optString("colorEnd"), cStart)
+            val cMid = parseColorOptional(bgObj.optString("colorMid"))
+            val angleDeg = bgObj.optDouble("gradientAngleDeg", 90.0).toFloat()
             val imgUri = if (bgObj.has("imageUri")) bgObj.optString("imageUri") else null
-            BackgroundSpec(type, cStart, cEnd, imgUri)
+            BackgroundSpec(type, cStart, cEnd, imgUri, cMid, angleDeg)
         } else {
             BackgroundSpec.solid(Color.parseColor("#12121A"))
         }
 
+        val functionalKeyColor = parseColorOptional(surface.optString("functionalKeyColor"))
+        val accentKeyColor = parseColorOptional(surface.optString("accentKeyColor"))
+        val accentKeyTextColor = parseColorOptional(surface.optString("accentKeyTextColor"))
         val suggestionStripBgColor = parseColorSafe(surface.optString("suggestionStripBgColor"), Color.parseColor("#1A1A24"))
         val suggestionStripTextColor = parseColorSafe(surface.optString("suggestionStripTextColor"), Color.parseColor("#E0E0E8"))
         val keyLabelColorPrimary = parseColorSafe(surface.optString("keyLabelColorPrimary"), Color.WHITE)
@@ -207,12 +224,25 @@ object ThemeSerializer {
             throw ThemeValidationException("trailFadeDurationMs ($trailFadeDurationMs) out of allowed range [100..800]")
         }
 
-        // Animations validation
+        // Animations & Visual Effects validation
         val anim = root.optJSONObject("animations") ?: JSONObject()
         val keyPressRippleEnabled = anim.optBoolean("keyPressRippleEnabled", true)
         val keyPopPreviewEnabled = anim.optBoolean("keyPopPreviewEnabled", true)
         val popSizeName = anim.optString("keyPopPreviewSize", "MEDIUM")
         val keyPopPreviewSize = try { PopPreviewSize.valueOf(popSizeName) } catch (e: Exception) { PopPreviewSize.MEDIUM }
+        val effectName = anim.optString("effectStyle", "NONE")
+        val effectStyle = try { EffectStyle.valueOf(effectName) } catch (e: Exception) { EffectStyle.NONE }
+
+        val effectColors = mutableListOf<Int>()
+        val effectColorsArr = anim.optJSONArray("effectColors")
+        if (effectColorsArr != null) {
+            for (i in 0 until effectColorsArr.length()) {
+                parseColorOptional(effectColorsArr.optString(i))?.let { effectColors.add(it) }
+            }
+        }
+
+        val catName = root.optString("category", "DARK")
+        val category = try { ThemeCategory.valueOf(catName) } catch (e: Exception) { ThemeCategory.DARK }
 
         return ThemeModel(
             id = id,
@@ -241,7 +271,13 @@ object ThemeSerializer {
             trailFadeDurationMs = trailFadeDurationMs,
             keyPressRippleEnabled = keyPressRippleEnabled,
             keyPopPreviewEnabled = keyPopPreviewEnabled,
-            keyPopPreviewSize = keyPopPreviewSize
+            keyPopPreviewSize = keyPopPreviewSize,
+            functionalKeyColor = functionalKeyColor,
+            accentKeyColor = accentKeyColor,
+            accentKeyTextColor = accentKeyTextColor,
+            effectStyle = effectStyle,
+            effectColors = effectColors,
+            category = category
         )
     }
 
@@ -251,6 +287,15 @@ object ThemeSerializer {
             Color.parseColor(hexStr)
         } catch (e: Exception) {
             fallback
+        }
+    }
+
+    private fun parseColorOptional(hexStr: String): Int? {
+        if (hexStr.isBlank()) return null
+        return try {
+            Color.parseColor(hexStr)
+        } catch (e: Exception) {
+            null
         }
     }
 }

@@ -63,25 +63,55 @@ data class ColorSpec(
 }
 
 /**
- * Keyboard background specification: solid color, 2-stop gradient, or image URI.
+ * Visual key-press and edge lighting effect modes.
+ */
+enum class EffectStyle(val displayName: String, val badge: String) {
+    NONE("None", ""),
+    RIPPLE("Ripple Waves", "Ripple"),
+    MECH_GLOW("Mech Glow", "Mech Glow"),
+    CYBER_NEON("Cyber Neon Glow", "Cyber Glow"),
+    KEY_PULSE("Key Pulse", "Key Pulse")
+}
+
+/**
+ * Gallery grouping categories for built-in and extracted themes.
+ */
+enum class ThemeCategory(val label: String) {
+    ALL("All"),
+    EFFECTS("Effects"),
+    CYBER("Cyber"),
+    GRADIENTS("Gradients"),
+    DARK("Dark"),
+    LIGHT("Light"),
+    COLORFUL("Colorful"),
+    HIGH_CONTRAST("Contrast")
+}
+
+/**
+ * Keyboard background specification: solid color, 2- or 3-stop gradient, or image URI.
  */
 data class BackgroundSpec(
     val type: Type = Type.SOLID,
     val colorStart: Int = Color.parseColor("#12121A"),
     val colorEnd: Int = Color.parseColor("#181824"),
-    val imageUri: String? = null
+    val imageUri: String? = null,
+    val colorMid: Int? = null,
+    val gradientAngleDeg: Float = 90f
 ) {
     enum class Type { SOLID, GRADIENT, IMAGE }
 
     companion object {
         fun solid(color: Int) = BackgroundSpec(Type.SOLID, color, color, null)
-        fun gradient(start: Int, end: Int) = BackgroundSpec(Type.GRADIENT, start, end, null)
+        fun gradient(start: Int, end: Int, angleDeg: Float = 90f) =
+            BackgroundSpec(Type.GRADIENT, start, end, null, null, angleDeg)
+        fun gradient(start: Int, mid: Int, end: Int, angleDeg: Float = 135f) =
+            BackgroundSpec(Type.GRADIENT, start, end, null, mid, angleDeg)
         fun image(uri: String) = BackgroundSpec(Type.IMAGE, Color.BLACK, Color.BLACK, uri)
     }
 }
 
 /**
- * Master Keybord Theme Model exposing 20+ visual customization parameters.
+ * Master Keybord Theme Model exposing 20+ visual customization parameters plus extracted effects.
  */
 data class ThemeModel(
     val id: String,
@@ -118,7 +148,15 @@ data class ThemeModel(
     // --- Animations ---
     val keyPressRippleEnabled: Boolean = true,
     val keyPopPreviewEnabled: Boolean = true,
-    val keyPopPreviewSize: PopPreviewSize = PopPreviewSize.MEDIUM
+    val keyPopPreviewSize: PopPreviewSize = PopPreviewSize.MEDIUM,
+
+    // --- Extended Key Role & Effect Options (v1 backward-compatible defaults) ---
+    val functionalKeyColor: Int? = null,
+    val accentKeyColor: Int? = null,
+    val accentKeyTextColor: Int? = null,
+    val effectStyle: EffectStyle = EffectStyle.NONE,
+    val effectColors: List<Int> = emptyList(),
+    val category: ThemeCategory = ThemeCategory.DARK
 ) {
     fun copyWithId(newId: String, newName: String): ThemeModel {
         return this.copy(id = newId, name = newName, isBuiltIn = false)
