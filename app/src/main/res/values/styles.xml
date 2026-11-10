@@ -1,0 +1,14 @@
+<resources>
+    <style name="Theme.Keybord" parent="Theme.AppCompat.DayNight">
+        <item name="colorPrimary">@color/primary</item>
+        <item name="colorPrimaryDark">@color/primary_dark</item>
+        <item name="colorAccent">@color/accent</item>
+        <item name="android:windowBackground">@color/background_dark</item>
+    </style>
+
+    <style name="Theme.Keybord.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/background_dark</item>
+    </style>
+</resources>

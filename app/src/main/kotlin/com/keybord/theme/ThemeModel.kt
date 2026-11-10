@@ -1,0 +1,126 @@
+package com.keybord.theme
+
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+
+/**
+ * 6 Bundled font options for key labels.
+ */
+enum class FontChoice(val displayName: String) {
+    ROBOTO("Roboto"),
+    MONOSPACE("Monospace"),
+    SERIF("Serif"),
+    SANS_SERIF_MEDIUM("Sans-Serif Medium"),
+    JETBRAINS_MONO("JetBrains Mono"),
+    INTER("Inter");
+
+    fun toTypeface(): Typeface {
+        return when (this) {
+            ROBOTO -> Typeface.SANS_SERIF
+            MONOSPACE, JETBRAINS_MONO -> Typeface.MONOSPACE
+            SERIF -> Typeface.SERIF
+            SANS_SERIF_MEDIUM, INTER -> Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        }
+    }
+}
+
+/**
+ * Key pop preview size options.
+ */
+enum class PopPreviewSize(val scaleFactor: Float) {
+    SMALL(1.1f),
+    MEDIUM(1.35f),
+    LARGE(1.6f)
+}
+
+/**
+ * One-handed mode configuration.
+ */
+data class OneHandedConfig(
+    val enabled: Boolean = false,
+    val gravityRight: Boolean = true, // true = right offset, false = left offset
+    val widthPercent: Float = 85f // range 70..95
+)
+
+/**
+ * Color specification supporting solid color or a 2-stop linear gradient.
+ */
+data class ColorSpec(
+    val isGradient: Boolean = false,
+    val primaryColor: Int = Color.parseColor("#2A2B3D"),
+    val secondaryColor: Int = Color.parseColor("#1E1E2E"),
+    val gradientOrientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TOP_BOTTOM
+) {
+    companion object {
+        fun solid(color: Int): ColorSpec = ColorSpec(false, color, color)
+        fun gradient(
+            startColor: Int,
+            endColor: Int,
+            orientation: GradientDrawable.Orientation = GradientDrawable.Orientation.TOP_BOTTOM
+        ): ColorSpec = ColorSpec(true, startColor, endColor, orientation)
+    }
+}
+
+/**
+ * Keyboard background specification: solid color, 2-stop gradient, or image URI.
+ */
+data class BackgroundSpec(
+    val type: Type = Type.SOLID,
+    val colorStart: Int = Color.parseColor("#12121A"),
+    val colorEnd: Int = Color.parseColor("#181824"),
+    val imageUri: String? = null
+) {
+    enum class Type { SOLID, GRADIENT, IMAGE }
+
+    companion object {
+        fun solid(color: Int) = BackgroundSpec(Type.SOLID, color, color, null)
+        fun gradient(start: Int, end: Int) = BackgroundSpec(Type.GRADIENT, start, end, null)
+        fun image(uri: String) = BackgroundSpec(Type.IMAGE, Color.BLACK, Color.BLACK, uri)
+    }
+}
+
+/**
+ * Master Keybord Theme Model exposing 20+ visual customization parameters.
+ */
+data class ThemeModel(
+    val id: String,
+    val name: String,
+    val isBuiltIn: Boolean = false,
+    val schemaVersion: Int = 1,
+
+    // --- Layout Geometry (dp) ---
+    val keyHeightDp: Float = 54f,           // range 40..80
+    val keyCornerRadiusDp: Float = 8f,       // range 0..24
+    val keyGapHorizontalDp: Float = 4f,      // range 0..8
+    val keyGapVerticalDp: Float = 6f,        // range 0..8
+    val bottomPaddingDp: Float = 12f,        // navigation bar clearance
+    val oneHandedMode: OneHandedConfig = OneHandedConfig(),
+
+    // --- Colour and Surface ---
+    val keyFaceColor: ColorSpec = ColorSpec.solid(Color.parseColor("#252736")),
+    val keyBorderColor: Int = Color.parseColor("#1AFFFFFF"),
+    val keyBorderWidthDp: Float = 1f,        // range 0..4
+    val keyPressHighlightColor: Int = Color.parseColor("#33FFFFFF"),
+    val keyboardBackground: BackgroundSpec = BackgroundSpec.solid(Color.parseColor("#12121A")),
+    val suggestionStripBgColor: Int = Color.parseColor("#1A1A24"),
+    val suggestionStripTextColor: Int = Color.parseColor("#E0E0E8"),
+    val keyLabelColorPrimary: Int = Color.WHITE,
+    val keyLabelColorSecondary: Int = Color.parseColor("#8E929E"),
+    val keyLabelFont: FontChoice = FontChoice.ROBOTO,
+    val keyLabelSizeSp: Float = 16f,         // range 10..18
+
+    // --- Gesture Trail ---
+    val trailColor: Int = Color.parseColor("#4285F4"),
+    val trailWidthDp: Float = 12f,           // range 4..24
+    val trailFadeDurationMs: Long = 350L,    // range 100..800
+
+    // --- Animations ---
+    val keyPressRippleEnabled: Boolean = true,
+    val keyPopPreviewEnabled: Boolean = true,
+    val keyPopPreviewSize: PopPreviewSize = PopPreviewSize.MEDIUM
+) {
+    fun copyWithId(newId: String, newName: String): ThemeModel {
+        return this.copy(id = newId, name = newName, isBuiltIn = false)
+    }
+}
