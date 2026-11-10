@@ -11,6 +11,8 @@ import android.view.ViewGroup
 import android.view.Window
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedTextRequest
+import android.view.inputmethod.InputConnection
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.keybord.clipboard.InlineClipboardTrayView
@@ -62,6 +64,13 @@ class KeybordIME : InputMethodService() {
     private var wasLastCommittedFromSuggestion = false
     private var lastGlideCommittedWord: String? = null
     private var isSwipeSession = false
+
+    // Swipe-to-delete state
+    private var swipeUseSelectionHighlight = false
+    private var swipeInitialCursorEnd = 0
+    private var swipeWordBoundaries = IntArray(0)
+    private var lastSwipeWordCount = 0
+    private val swipeDeletedChunks = mutableListOf<String>()
 
     override fun onCreate() {
         super.onCreate()
@@ -189,6 +198,21 @@ class KeybordIME : InputMethodService() {
             onKeyTap = { key ->
                 handleKeyTap(key)
             }
+            onDeleteRepeatChar = {
+                deleteSingleCharOrSelection()
+            }
+            onDeleteWord = {
+                deleteOneWordBeforeCursor()
+            }
+            onDeleteSwipeStart = {
+                beginSwipeDeleteSession()
+            }
+            onDeleteSwipeStep = { wordCount ->
+                updateSwipeDeleteSelection(wordCount)
+            }
+            onDeleteSwipeFinish = { commitDelete ->
+                finishSwipeDeleteSession(commitDelete)
+            }
             onKeyPositionsChanged = { positions ->
                 glideDecoder.updateKeyPositions(positions)
             }
@@ -247,6 +271,11 @@ class KeybordIME : InputMethodService() {
             }
         }
         configureImeWindow()
+        keyboardView.cancelActiveTouch()
+        swipeUseSelectionHighlight = false
+        swipeWordBoundaries = IntArray(0)
+        swipeDeletedChunks.clear()
+        lastSwipeWordCount = 0
         currentWordPrefix.clear()
         recentContextWords.clear()
         lastGlideCommittedWord = null
@@ -390,22 +419,7 @@ class KeybordIME : InputMethodService() {
         lastGlideCommittedWord = null
 
         when (key) {
-            "⌫" -> {
-                // Backspace logic
-                if (currentWordPrefix.isNotEmpty()) {
-                    currentWordPrefix.deleteCharAt(currentWordPrefix.length - 1)
-                }
-
-                // Check for manual correction / scrub delete
-                if (lastCommittedWord != null && wasLastCommittedFromSuggestion) {
-                    vocabEngine.onScrubDelete(lastCommittedWord!!)
-                    lastCommittedWord = null
-                    wasLastCommittedFromSuggestion = false
-                }
-
-                ic.deleteSurroundingText(1, 0)
-                refreshPredictions()
-            }
+            "⌫" -> deleteSingleCharOrSelection()
 
             "⇧", "⬆", "⇪" -> {
                 keyboardView.shiftState = when (keyboardView.shiftState) {
@@ -483,6 +497,141 @@ class KeybordIME : InputMethodService() {
 
                 refreshPredictions()
             }
+        }
+    }
+
+    private fun deleteSingleCharOrSelection() {
+        val ic = currentInputConnection ?: return
+        lastGlideCommittedWord = null
+
+        val selected = try { ic.getSelectedText(0) } catch (_: Exception) { null }
+        if (!selected.isNullOrEmpty()) {
+            ic.commitText("", 1)
+            syncWordPrefixFromCursor(ic)
+            refreshPredictions()
+            return
+        }
+
+        if (lastCommittedWord != null && wasLastCommittedFromSuggestion) {
+            vocabEngine.onScrubDelete(lastCommittedWord!!)
+            lastCommittedWord = null
+            wasLastCommittedFromSuggestion = false
+        }
+
+        val before = try { ic.getTextBeforeCursor(4, 0) } catch (_: Exception) { null }
+        val delCount = DeleteWordHelper.computeSingleCharDeleteCount(before)
+        ic.deleteSurroundingText(delCount, 0)
+        syncWordPrefixFromCursor(ic)
+        refreshPredictions()
+    }
+
+    private fun deleteOneWordBeforeCursor() {
+        val ic = currentInputConnection ?: return
+        lastGlideCommittedWord = null
+
+        val selected = try { ic.getSelectedText(0) } catch (_: Exception) { null }
+        if (!selected.isNullOrEmpty()) {
+            ic.commitText("", 1)
+            syncWordPrefixFromCursor(ic)
+            refreshPredictions()
+            return
+        }
+
+        val before = try { ic.getTextBeforeCursor(128, 0) } catch (_: Exception) { null } ?: ""
+        val delLen = DeleteWordHelper.computeWordDeleteLength(before)
+        if (delLen > 0) {
+            ic.deleteSurroundingText(delLen, 0)
+        }
+        syncWordPrefixFromCursor(ic)
+        refreshPredictions()
+    }
+
+    private fun beginSwipeDeleteSession() {
+        val ic = currentInputConnection ?: return
+        lastGlideCommittedWord = null
+        swipeDeletedChunks.clear()
+        swipeWordBoundaries = IntArray(0)
+        swipeUseSelectionHighlight = false
+        lastSwipeWordCount = 0
+
+        val ext = try { ic.getExtractedText(ExtractedTextRequest(), 0) } catch (_: Exception) { null }
+        val extText = ext?.text
+        val probeBefore = try { ic.getTextBeforeCursor(8, 0) } catch (_: Exception) { null }
+
+        if (ext != null && extText != null && ext.selectionStart >= 0 && ext.selectionStart == ext.selectionEnd) {
+            val end = ext.selectionEnd.coerceIn(0, extText.length)
+            if (end > 0 || probeBefore.isNullOrEmpty()) {
+                swipeInitialCursorEnd = end
+                swipeWordBoundaries = DeleteWordHelper.computeWordBoundariesBeforeCursor(
+                    extText.subSequence(0, end),
+                    maxWords = 40
+                )
+                swipeUseSelectionHighlight = true
+                return
+            }
+        }
+    }
+
+    private fun updateSwipeDeleteSelection(requestedWords: Int): Int {
+        val ic = currentInputConnection ?: return 0
+        val count = if (swipeUseSelectionHighlight) {
+            if (swipeWordBoundaries.size <= 1) return 0
+            val target = requestedWords.coerceIn(0, swipeWordBoundaries.lastIndex)
+            ic.setSelection(swipeWordBoundaries[target], swipeInitialCursorEnd)
+            target
+        } else {
+            val clampedReq = requestedWords.coerceAtLeast(0)
+            while (swipeDeletedChunks.size < clampedReq) {
+                val before = try { ic.getTextBeforeCursor(128, 0) } catch (_: Exception) { null } ?: ""
+                val delLen = DeleteWordHelper.computeWordDeleteLength(before)
+                if (delLen <= 0) break
+                val chunk = before.subSequence(before.length - delLen, before.length).toString()
+                swipeDeletedChunks.add(chunk)
+                ic.deleteSurroundingText(delLen, 0)
+            }
+            while (swipeDeletedChunks.size > clampedReq) {
+                val restored = swipeDeletedChunks.removeAt(swipeDeletedChunks.lastIndex)
+                ic.commitText(restored, 1)
+            }
+            swipeDeletedChunks.size
+        }
+        lastSwipeWordCount = count
+        return count
+    }
+
+    private fun finishSwipeDeleteSession(commitDelete: Boolean) {
+        val ic = currentInputConnection
+        if (ic != null) {
+            if (swipeUseSelectionHighlight) {
+                if (commitDelete && lastSwipeWordCount > 0) {
+                    ic.commitText("", 1)
+                } else if (swipeWordBoundaries.isNotEmpty()) {
+                    ic.setSelection(swipeInitialCursorEnd, swipeInitialCursorEnd)
+                }
+            } else if (!commitDelete && swipeDeletedChunks.isNotEmpty()) {
+                while (swipeDeletedChunks.isNotEmpty()) {
+                    val restored = swipeDeletedChunks.removeAt(swipeDeletedChunks.lastIndex)
+                    ic.commitText(restored, 1)
+                }
+            }
+            syncWordPrefixFromCursor(ic)
+            refreshPredictions()
+        }
+        swipeUseSelectionHighlight = false
+        swipeWordBoundaries = IntArray(0)
+        swipeDeletedChunks.clear()
+        lastSwipeWordCount = 0
+    }
+
+    private fun syncWordPrefixFromCursor(ic: InputConnection) {
+        currentWordPrefix.clear()
+        val before = try { ic.getTextBeforeCursor(32, 0) } catch (_: Exception) { null } ?: return
+        var i = before.length
+        while (i > 0 && before[i - 1].isLetter()) {
+            i--
+        }
+        if (i < before.length) {
+            currentWordPrefix.append(before.subSequence(i, before.length))
         }
     }
 

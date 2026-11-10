@@ -72,11 +72,19 @@ class KeyPopPreviewView @JvmOverloads constructor(
 
         val density = resources.displayMetrics.density
         val scale = theme.keyPopPreviewSize.scaleFactor
+        val textScale = if (text.length > 2) 0.72f else 1.2f
 
-        val popWidth = bounds.width() * scale
+        textPaint.color = theme.keyLabelColorPrimary
+        textPaint.textSize = theme.keyLabelSizeSp * density * scale * textScale
+        textPaint.typeface = theme.keyLabelFont.toTypeface()
+
+        val minLabelWidth = if (text.length > 2) textPaint.measureText(text) + 18f * density else 0f
+        val popWidth = kotlin.math.max(bounds.width() * scale, minLabelWidth)
         val popHeight = bounds.height() * scale
-        val popLeft = bounds.centerX() - popWidth / 2f
-        val popTop = bounds.top - popHeight - (6f * density)
+        val margin = 4f * density
+        val maxLeft = (width.toFloat() - popWidth - margin).coerceAtLeast(margin)
+        val popLeft = (bounds.centerX() - popWidth / 2f).coerceIn(margin, maxLeft)
+        val popTop = (bounds.top - popHeight - (6f * density)).coerceAtLeast(margin)
         val popRect = RectF(popLeft, popTop, popLeft + popWidth, popTop + popHeight)
 
         // Composite semi-transparent key face colors over surface so popup remains opaque & legible
@@ -99,10 +107,6 @@ class KeyPopPreviewView @JvmOverloads constructor(
         }
         canvas.drawRoundRect(popRect, radius, radius, bgPaint)
         canvas.drawRoundRect(popRect, radius, radius, borderPaint)
-
-        textPaint.color = theme.keyLabelColorPrimary
-        textPaint.textSize = theme.keyLabelSizeSp * density * scale * 1.2f
-        textPaint.typeface = theme.keyLabelFont.toTypeface()
 
         val textY = popRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
         canvas.drawText(text, popRect.centerX(), textY, textPaint)

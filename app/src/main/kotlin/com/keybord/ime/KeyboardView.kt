@@ -3,6 +3,8 @@ package com.keybord.ime
 import android.content.Context
 import android.graphics.*
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.util.AttributeSet
@@ -56,12 +58,18 @@ class KeyboardView @JvmOverloads constructor(
 
     var onKeyTap: ((String) -> Unit)? = null
     var onKeyLongPress: ((String) -> Unit)? = null
+    var onDeleteRepeatChar: (() -> Unit)? = null
+    var onDeleteWord: (() -> Unit)? = null
+    var onDeleteSwipeStart: (() -> Unit)? = null
+    var onDeleteSwipeStep: ((wordCount: Int) -> Int)? = null
+    var onDeleteSwipeFinish: ((commitDelete: Boolean) -> Unit)? = null
     var onKeyPositionsChanged: ((Map<Char, KeyPosition>) -> Unit)? = null
 
     var popPreviewView: KeyPopPreviewView? = null
 
     private val vibrator = context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
     private val effectEngine = KeyboardEffectEngine()
+    private val deleteHandler = Handler(Looper.getMainLooper())
 
     // Drawing paints
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -87,6 +95,30 @@ class KeyboardView @JvmOverloads constructor(
     private var touchDownX = 0f
     private var touchDownY = 0f
     private var isSwipeGesture = false
+
+    // Delete key long-press & Gboard-style swipe-to-delete state
+    private var deleteKeyDown: KeyDef? = null
+    private var hasPerformedRepeatDelete = false
+    private var isDeleteSwipeActive = false
+    private var activeDeleteSwipeCount = 0
+    private var deleteRepeatTicks = 0
+
+    private val deleteRepeatRunnable = object : Runnable {
+        override fun run() {
+            if (deleteKeyDown == null || isDeleteSwipeActive) return
+            hasPerformedRepeatDelete = true
+            deleteRepeatTicks++
+            val nextIntervalMs = if (deleteRepeatTicks <= DELETE_CHAR_TICKS_BEFORE_WORDS) {
+                onDeleteRepeatChar?.invoke() ?: onKeyTap?.invoke("⌫")
+                DELETE_CHAR_INTERVAL_MS
+            } else {
+                triggerHapticFeedback(10L)
+                onDeleteWord?.invoke() ?: onDeleteRepeatChar?.invoke() ?: onKeyTap?.invoke("⌫")
+                DELETE_WORD_INTERVAL_MS
+            }
+            deleteHandler.postDelayed(this, nextIntervalMs)
+        }
+    }
 
     private val alphaRows = listOf(
         listOf(
@@ -229,6 +261,7 @@ class KeyboardView @JvmOverloads constructor(
 
     override fun onDetachedFromWindow() {
         super.onDetachedFromWindow()
+        resetDeleteGesture(commitSwipe = false)
         effectEngine.clear()
     }
 
@@ -241,9 +274,22 @@ class KeyboardView @JvmOverloads constructor(
 
     fun cancelActiveTouch() {
         popPreviewView?.dismiss()
+        resetDeleteGesture(commitSwipe = false)
         pressedKey = null
         isSwipeGesture = false
         invalidate()
+    }
+
+    private fun resetDeleteGesture(commitSwipe: Boolean) {
+        deleteHandler.removeCallbacks(deleteRepeatRunnable)
+        if (isDeleteSwipeActive) {
+            onDeleteSwipeFinish?.invoke(commitSwipe)
+        }
+        deleteKeyDown = null
+        hasPerformedRepeatDelete = false
+        isDeleteSwipeActive = false
+        activeDeleteSwipeCount = 0
+        deleteRepeatTicks = 0
     }
 
     private fun isFunctionalKey(key: KeyDef): Boolean {
@@ -388,9 +434,11 @@ class KeyboardView @JvmOverloads constructor(
     fun handleTouchEvent(event: MotionEvent): Boolean {
         val x = event.x
         val y = event.y
+        val density = resources.displayMetrics.density
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                resetDeleteGesture(commitSwipe = false)
                 touchDownTime = System.currentTimeMillis()
                 touchDownX = x
                 touchDownY = y
@@ -407,13 +455,23 @@ class KeyboardView @JvmOverloads constructor(
                         theme,
                         width.toFloat()
                     )
+                    if (key.code == "⌫") {
+                        deleteKeyDown = key
+                        deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
+                    }
                 }
                 invalidate()
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val touchSlopPx = 16f * resources.displayMetrics.density
+                val activeDeleteKey = deleteKeyDown
+                if (activeDeleteKey != null) {
+                    handleDeleteMove(activeDeleteKey, x, y, density)
+                    return true
+                }
+
+                val touchSlopPx = 16f * density
                 val dist = Math.hypot((x - touchDownX).toDouble(), (y - touchDownY).toDouble()).toFloat()
                 if (dist > touchSlopPx) {
                     isSwipeGesture = true
@@ -434,6 +492,19 @@ class KeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 popPreviewView?.dismiss()
+                val activeDeleteKey = deleteKeyDown
+                if (activeDeleteKey != null) {
+                    val shouldFireSingleTap = !isDeleteSwipeActive && !hasPerformedRepeatDelete && !isSwipeGesture
+                    resetDeleteGesture(commitSwipe = true)
+                    pressedKey = null
+                    isSwipeGesture = false
+                    invalidate()
+                    if (shouldFireSingleTap) {
+                        onKeyTap?.invoke("⌫")
+                    }
+                    return true
+                }
+
                 val targetKey = pressedKey ?: findKeyAt(x, y) ?: findKeyAt(touchDownX, touchDownY)
                 val wasSwipe = isSwipeGesture
                 pressedKey = null
@@ -449,6 +520,7 @@ class KeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_CANCEL -> {
                 popPreviewView?.dismiss()
+                resetDeleteGesture(commitSwipe = false)
                 pressedKey = null
                 isSwipeGesture = false
                 invalidate()
@@ -458,18 +530,70 @@ class KeyboardView @JvmOverloads constructor(
         return false
     }
 
-    private fun triggerHapticFeedback() {
+    private fun handleDeleteMove(activeDeleteKey: KeyDef, x: Float, y: Float, density: Float) {
+        val leftwardPx = touchDownX - x
+        val verticalPx = Math.abs(y - touchDownY)
+        val swipeStartSlopPx = DELETE_SWIPE_START_SLOP_DP * density
+        val wordStepPx = DELETE_SWIPE_WORD_STEP_DP * density
+
+        if (!isDeleteSwipeActive) {
+            if (!hasPerformedRepeatDelete && leftwardPx >= swipeStartSlopPx && leftwardPx >= verticalPx) {
+                isDeleteSwipeActive = true
+                isSwipeGesture = true
+                deleteHandler.removeCallbacks(deleteRepeatRunnable)
+                onDeleteSwipeStart?.invoke()
+            } else {
+                val dist = Math.hypot(leftwardPx.toDouble(), verticalPx.toDouble()).toFloat()
+                if (dist > DELETE_REPEAT_CANCEL_DRIFT_DP * density) {
+                    deleteHandler.removeCallbacks(deleteRepeatRunnable)
+                    isSwipeGesture = true
+                    popPreviewView?.dismiss()
+                    if (pressedKey != null) {
+                        pressedKey = null
+                        invalidate()
+                    }
+                }
+                return
+            }
+        }
+
+        pressedKey = activeDeleteKey
+        val requestedWords = if (leftwardPx < swipeStartSlopPx * 0.55f) {
+            0
+        } else {
+            1 + ((leftwardPx - swipeStartSlopPx) / wordStepPx).toInt().coerceAtLeast(0)
+        }
+        val actualWords = onDeleteSwipeStep?.invoke(requestedWords) ?: requestedWords
+        if (actualWords != activeDeleteSwipeCount) {
+            activeDeleteSwipeCount = actualWords
+            triggerHapticFeedback(10L)
+        }
+        val label = if (actualWords == 0) "Keep" else "−$actualWords w"
+        popPreviewView?.show(label, activeDeleteKey.bounds)
+    }
+
+    private fun triggerHapticFeedback(durationMs: Long = 15L) {
         if (vibrator != null && vibrator.hasVibrator()) {
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    vibrator.vibrate(VibrationEffect.createOneShot(15, VibrationEffect.DEFAULT_AMPLITUDE))
+                    vibrator.vibrate(VibrationEffect.createOneShot(durationMs, VibrationEffect.DEFAULT_AMPLITUDE))
                 } else {
                     @Suppress("DEPRECATION")
-                    vibrator.vibrate(15)
+                    vibrator.vibrate(durationMs)
                 }
             } catch (e: Exception) {
                 // Permission or system vibrator error
             }
         }
+    }
+
+    companion object {
+        private const val DELETE_REPEAT_INITIAL_DELAY_MS = 380L
+        private const val DELETE_CHAR_INTERVAL_MS = 55L
+        private const val DELETE_WORD_INTERVAL_MS = 150L
+        private const val DELETE_CHAR_TICKS_BEFORE_WORDS = 5
+        private const val DELETE_SWIPE_START_SLOP_DP = 18f
+        private const val DELETE_SWIPE_WORD_STEP_DP = 28f
+        private const val DELETE_REPEAT_CANCEL_DRIFT_DP = 26f
     }
 }
