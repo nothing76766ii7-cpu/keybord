@@ -492,6 +492,7 @@ class KeyboardView @JvmOverloads constructor(
                             spaceKeyDown = key
                             spaceLastStepIndex = 0
                         }
+                        else -> Unit
                     }
                 }
                 invalidate()
