@@ -2,6 +2,7 @@ package com.keybord.settings
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
@@ -14,7 +15,8 @@ import com.keybord.theme.KeyboardLayoutPrefs
 import com.keybord.ui.UiKit
 
 /**
- * Typing behavior, Bilingual Hinglish engine, & Layout quick toggles.
+ * Stitch Screen 07: Typing & Layout Settings
+ * Grouped cards for Smart Typing Engine, Layout & Key Rows, and Keypress Feedback.
  */
 class TypingSettingsActivity : AppCompatActivity() {
 
@@ -35,163 +37,225 @@ class TypingSettingsActivity : AppCompatActivity() {
         }
         UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
 
+        val verChip = UiKit.createBadgePill(this, "v1.1.8", UiKit.SURFACE_CARD, UiKit.TEXT_SECONDARY, UiKit.BORDER_SUBTLE)
         root.addView(
             UiKit.createHeaderBar(
                 this,
-                title = "Typing & Hinglish",
-                subtitle = "Glide typing, auto-correct, bilingual vocab & cursor controls",
-                showBack = true
+                title = "Typing & Layout",
+                subtitle = "Spatial glide engine, predictions & physical keybed geometry.",
+                showBack = true,
+                trailingView = verChip
             )
         )
 
         val scroll = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f)
             isVerticalScrollBarEnabled = false
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(0, 0, 0, (16 * dp).toInt())
+            setPadding(0, 0, 0, (14 * dp).toInt())
         }
 
-        // Bilingual & Prediction Section
-        content.addView(UiKit.createSectionLabel(this, "Languages & Learning"))
-        content.addView(
-            UiKit.createSwitchCard(
+        // Card 1: Smart Typing Engine
+        val smartCard = UiKit.createCardContainer(this, paddingDp = 16f, radiusDp = 18f, bottomMarginDp = 14f)
+        smartCard.addView(buildCardHeader("🧠", "#1E2D52", "Smart Typing Engine"))
+        smartCard.addView(
+            UiKit.createSwitchRow(
                 this,
-                title = "Hinglish (English + Hindi Roman)",
-                subtitle = "Enable Hinglish suggestions, auto-correct & glide swiping (e.g. namaste, bhai, kya, achha)",
-                checked = prefs.getBoolean("hinglish_typing", true)
-            ) { checked ->
-                prefs.edit().putBoolean("hinglish_typing", checked).apply()
+                "Glide Typing",
+                "Spatial trajectory decoding & glowing trail",
+                prefs.getBoolean("glide_typing", true)
+            ) { prefs.edit().putBoolean("glide_typing", it).apply() }
+        )
+        smartCard.addView(UiKit.createHairlineDivider(this))
+        smartCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Auto-Correction",
+                "Dynamic Damerau-Levenshtein typo fixes (⌫ reverts)",
+                prefs.getBoolean("auto_correct", true),
+                badgeText = "Active"
+            ) { prefs.edit().putBoolean("auto_correct", it).apply() }
+        )
+        smartCard.addView(UiKit.createHairlineDivider(this))
+        smartCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Auto-Capitalization",
+                "Capitalize first word of sentences & 'I'",
+                prefs.getBoolean("auto_capitalise", true)
+            ) { prefs.edit().putBoolean("auto_capitalise", it).apply() }
+        )
+        smartCard.addView(UiKit.createHairlineDivider(this))
+        smartCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Hinglish Bilingual Lexicon",
+                "English + Romanized Hindi glide, prefixes & next-word hints",
+                prefs.getBoolean("hinglish_typing", true),
+                badgeText = "EN + HI"
+            ) { prefs.edit().putBoolean("hinglish_typing", it).apply() }
+        )
+        smartCard.addView(UiKit.createHairlineDivider(this))
+        smartCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Double-Space Period Shortcut",
+                "Inserts '. ' when Space is double-tapped",
+                prefs.getBoolean("double_space_period", true)
+            ) { prefs.edit().putBoolean("double_space_period", it).apply() }
+        )
+        content.addView(smartCard)
+
+        // Card 2: Layout & Key Rows
+        val layoutCard = UiKit.createCardContainer(this, paddingDp = 16f, radiusDp = 18f, bottomMarginDp = 14f)
+        layoutCard.addView(buildCardHeader("⌨", "#261E4A", "Layout & Key Rows"))
+        layoutCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Dedicated Number Row",
+                "Permanent 1–0 row pinned above QWERTY letters",
+                layoutPrefs.showNumberRow
+            ) { layoutPrefs.showNumberRow = it }
+        )
+        layoutCard.addView(UiKit.createHairlineDivider(this))
+        layoutCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Secondary Symbol Hints",
+                "Upper-corner 360ms long-press glyph preview",
+                layoutPrefs.showSecondarySymbols
+            ) { layoutPrefs.showSecondarySymbols = it }
+        )
+        layoutCard.addView(UiKit.createHairlineDivider(this))
+        layoutCard.addView(
+            buildLinkRow("Height, Corners & Spacing Studio", "Key ${layoutPrefs.keyHeightDp.toInt()}dp • Radius ${layoutPrefs.cornerRadiusDp.toInt()}dp") {
+                startActivity(Intent(this, KeyboardLayoutCustomizeActivity::class.java))
+            }
+        )
+        layoutCard.addView(UiKit.createHairlineDivider(this))
+        layoutCard.addView(
+            buildLinkRow("Personal Dictionary & Shortcuts", "Custom words, expansions & system sync") {
+                startActivity(Intent(this, PersonalDictionaryActivity::class.java))
+            }
+        )
+        content.addView(layoutCard)
+
+        // Card 3: Keypress Feedback (Stitch 07 bottom card)
+        val feedbackCard = UiKit.createCardContainer(this, paddingDp = 16f, radiusDp = 18f, bottomMarginDp = 14f)
+        feedbackCard.addView(buildCardHeader("📳", "#172E36", "Keypress Feedback"))
+        feedbackCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Haptic Feedback on Keypress",
+                "Tactile motor impulse on each key actuation",
+                layoutPrefs.vibrationDurationMs > 0L
+            ) { enabled ->
+                layoutPrefs.vibrationDurationMs = if (enabled) 18L else 0L
+            }
+        )
+        feedbackCard.addView(UiKit.createHairlineDivider(this))
+        feedbackCard.addView(
+            UiKit.createSwitchRow(
+                this,
+                "Key-Pop Magnification Preview",
+                "Elevate key bubble badge above active fingertip",
+                layoutPrefs.popPreviewEnabled
+            ) { layoutPrefs.popPreviewEnabled = it }
+        )
+        content.addView(feedbackCard)
+
+        content.addView(
+            UiKit.createSliderCard(
+                this,
+                "Vibration Duration",
+                " ms",
+                layoutPrefs.vibrationDurationMs.toInt(),
+                0,
+                40
+            ) { v ->
+                layoutPrefs.vibrationDurationMs = v.toLong()
             }
         )
 
-        // Smart Typing Section
-        content.addView(UiKit.createSectionLabel(this, "Smart Input & Corrections"))
         content.addView(
-            UiKit.createSwitchCard(
+            UiKit.createPrivacyFooter(
                 this,
-                title = "Glide Typing (Swipe)",
-                subtitle = "Slide smoothly across keys to type complete English & Hinglish words",
-                checked = prefs.getBoolean("glide_typing", true)
-            ) { checked ->
-                prefs.edit().putBoolean("glide_typing", checked).apply()
-            }
+                "Zero-Telemetry • 100% Local Inference",
+                "Keystrokes and spatial trajectory data never leave this device."
+            )
         )
-        content.addView(
-            UiKit.createSwitchCard(
-                this,
-                title = "Auto-Correction",
-                subtitle = "Fix common typos automatically on space/punctuation (tap ⌫ immediately to revert)",
-                checked = prefs.getBoolean("auto_correct", true)
-            ) { checked ->
-                prefs.edit().putBoolean("auto_correct", checked).apply()
-            }
-        )
-        content.addView(
-            UiKit.createSwitchCard(
-                this,
-                title = "Auto-Capitalisation",
-                subtitle = "Capitalise the first letter of sentences and standalone 'I'",
-                checked = prefs.getBoolean("auto_capitalise", true)
-            ) { checked ->
-                prefs.edit().putBoolean("auto_capitalise", checked).apply()
-            }
-        )
-        content.addView(
-            UiKit.createSwitchCard(
-                this,
-                title = "Double-Space Period",
-                subtitle = "Double-tapping the Space bar inserts '. ' quickly",
-                checked = prefs.getBoolean("double_space_period", true)
-            ) { checked ->
-                prefs.edit().putBoolean("double_space_period", checked).apply()
-            }
-        )
-
-        // Keys & Extra Controls Section
-        content.addView(UiKit.createSectionLabel(this, "Keys & Extra Controls"))
-        content.addView(
-            UiKit.createSwitchCard(
-                this,
-                title = "Dedicated Number Row",
-                subtitle = "Show 1–0 row permanently above QWERTY letters",
-                checked = layoutPrefs.showNumberRow
-            ) { checked ->
-                layoutPrefs.showNumberRow = checked
-            }
-        )
-        content.addView(
-            UiKit.createSwitchCard(
-                this,
-                title = "Secondary Symbol Hints",
-                subtitle = "Show corner hints & 360ms long-press alternate characters",
-                checked = layoutPrefs.showSecondarySymbols
-            ) { checked ->
-                layoutPrefs.showSecondarySymbols = checked
-            }
-        )
-
-        // Interactive Gestures Summary + Height Studio Link
-        val tipCard = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@TypingSettingsActivity, UiKit.SURFACE_CARD, 16f, UiKit.BORDER_SUBTLE, 1f)
-            setPadding((16 * dp).toInt(), (14 * dp).toInt(), (16 * dp).toInt(), (14 * dp).toInt())
-            layoutParams = LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.WRAP_CONTENT
-            ).apply {
-                topMargin = (6 * dp).toInt()
-                bottomMargin = (12 * dp).toInt()
-            }
-        }
-        tipCard.addView(
-            TextView(this).apply {
-                text = "Built-in Gboard-Style Gestures"
-                textSize = 14.5f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(UiKit.TEXT_PRIMARY)
-            }
-        )
-        tipCard.addView(
-            TextView(this).apply {
-                text = "• Space Cursor Control: Slide horizontally on the Space bar to glide the cursor.\n" +
-                    "• Swipe-to-Delete: Slide left from ⌫ to highlight & delete whole words cleanly.\n" +
-                    "• 2-Thumb Rollover: Press next key before lifting first thumb — zero dropped letters.\n" +
-                    "• Adaptive Learning: Words you type twice promote automatically into Glide & Suggestions."
-                textSize = 12.5f
-                setTextColor(UiKit.TEXT_SECONDARY)
-                setLineSpacing(3f * dp, 1f)
-                setPadding(0, (6 * dp).toInt(), 0, 0)
-            }
-        )
-        content.addView(tipCard)
-
-        val studioCard = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            background = UiKit.roundedDrawable(this@TypingSettingsActivity, UiKit.ACCENT_SOFT, 16f, UiKit.ACCENT_PRIMARY, 1f)
-            setPadding((16 * dp).toInt(), (14 * dp).toInt(), (16 * dp).toInt(), (14 * dp).toInt())
-            setOnClickListener {
-                startActivity(Intent(this@TypingSettingsActivity, KeyboardLayoutCustomizeActivity::class.java))
-            }
-        }
-        studioCard.addView(
-            TextView(this).apply {
-                text = "📐 Open Height & Buttons Live Preview Studio →"
-                textSize = 14f
-                typeface = Typeface.DEFAULT_BOLD
-                setTextColor(UiKit.TEXT_PRIMARY)
-            }
-        )
-        content.addView(studioCard)
 
         scroll.addView(content)
         root.addView(scroll)
         setContentView(root)
+    }
+
+    private fun buildCardHeader(icon: String, iconBg: String, title: String): LinearLayout {
+        val dp = resources.displayMetrics.density
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (10 * dp).toInt())
+            addView(
+                TextView(context).apply {
+                    text = icon
+                    textSize = 16f
+                    gravity = Gravity.CENTER
+                    background = UiKit.roundedDrawable(context, Color.parseColor(iconBg), 10f)
+                    val sz = (34 * dp).toInt()
+                    layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (10 * dp).toInt() }
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = title
+                    textSize = 16f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(UiKit.TEXT_PRIMARY)
+                }
+            )
+        }
+    }
+
+    private fun buildLinkRow(title: String, subtitle: String, onClick: () -> Unit): LinearLayout {
+        val dp = resources.displayMetrics.density
+        return LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, (11 * dp).toInt(), 0, (11 * dp).toInt())
+            setOnClickListener { onClick() }
+            addView(
+                LinearLayout(context).apply {
+                    orientation = LinearLayout.VERTICAL
+                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+                    addView(
+                        TextView(context).apply {
+                            text = title
+                            textSize = 15f
+                            typeface = Typeface.DEFAULT_BOLD
+                            setTextColor(UiKit.TEXT_PRIMARY)
+                        }
+                    )
+                    addView(
+                        TextView(context).apply {
+                            text = subtitle
+                            textSize = 12f
+                            setTextColor(UiKit.ACCENT_PRIMARY)
+                            setPadding(0, (2 * dp).toInt(), 0, 0)
+                        }
+                    )
+                }
+            )
+            addView(
+                TextView(context).apply {
+                    text = "›"
+                    textSize = 20f
+                    setTextColor(UiKit.TEXT_MUTED)
+                    setPadding((8 * dp).toInt(), 0, (4 * dp).toInt(), 0)
+                }
+            )
+        }
     }
 }

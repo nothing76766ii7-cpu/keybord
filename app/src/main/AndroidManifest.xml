@@ -82,6 +82,12 @@
             android:label="Height &amp; Buttons"
             android:theme="@style/Theme.Keybord.NoActionBar" />
 
+        <activity
+            android:name=".settings.WritingToolsActivity"
+            android:exported="false"
+            android:label="Writing Tools"
+            android:theme="@style/Theme.Keybord.NoActionBar" />
+
         <!-- Theme Management Activities -->
         <activity
             android:name=".theme.ThemeGalleryActivity"

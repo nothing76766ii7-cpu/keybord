@@ -11,8 +11,8 @@ android {
         applicationId = "com.keybord"
         minSdk = 24
         targetSdk = 35
-        versionCode = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 9
-        versionName = "1.1.7"
+        versionCode = System.getenv("BUILD_NUMBER")?.toIntOrNull() ?: 10
+        versionName = "1.1.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

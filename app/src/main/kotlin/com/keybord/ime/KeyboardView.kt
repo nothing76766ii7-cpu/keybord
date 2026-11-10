@@ -82,6 +82,14 @@ class KeyboardView @JvmOverloads constructor(
 
     var vibrationDurationMs: Long = 14L
 
+    var spaceBarLabel: String = "English • QWERTY"
+        set(value) {
+            if (field != value) {
+                field = value
+                invalidate()
+            }
+        }
+
     var onKeyTap: ((String) -> Unit)? = null
     var onKeyLongPress: ((String) -> Unit)? = null
     var onDeleteRepeatChar: (() -> Unit)? = null
@@ -102,11 +110,14 @@ class KeyboardView @JvmOverloads constructor(
     // Drawing paints
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shadowPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val bevelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     private val secondaryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.RIGHT }
     private val highlightPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val spaceCursorPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val shiftDotPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     data class KeyDef(
         val code: String,
@@ -414,17 +425,28 @@ class KeyboardView @JvmOverloads constructor(
 
         highlightPaint.color = theme.keyPressHighlightColor
         val accentTint = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
+        val isLightBg = Color.luminance(theme.keyboardBackground.colorStart) > 0.5f
+        shadowPaint.color = if (isLightBg) Color.argb(28, 20, 23, 32) else Color.argb(110, 0, 0, 0)
+        bevelPaint.strokeWidth = 1f * density
+        bevelPaint.color = if (isLightBg) Color.argb(190, 255, 255, 255) else Color.argb(26, 255, 255, 255)
 
         for (key in activeKeys) {
             val rect = key.bounds
             val isEnter = key.code == "Enter"
             val isSpace = key.code == " "
+            val isShift = key.code == "⇧"
             val isFunc = isFunctionalKey(key)
 
             if (theme.effectStyle == EffectStyle.CYBER_NEON && theme.keyBorderWidthDp > 0f) {
                 effectEngine.drawStaticCyberGlow(
                     canvas, rect, cornerRadius, theme.keyBorderColor, borderStrokePx
                 )
+            }
+
+            // Hardware keycap drop-shadow lip
+            if (theme.effectStyle != EffectStyle.CYBER_NEON) {
+                val lipRect = RectF(rect.left, rect.top + 1.5f * density, rect.right, rect.bottom + 1.5f * density)
+                canvas.drawRoundRect(lipRect, cornerRadius, cornerRadius, shadowPaint)
             }
 
             val overrideColor = when {
@@ -449,6 +471,19 @@ class KeyboardView @JvmOverloads constructor(
 
             canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
 
+            if (theme.effectStyle != EffectStyle.CYBER_NEON && !isEnter) {
+                val padX = cornerRadius.coerceAtLeast(4f * density)
+                if (rect.right - rect.left > padX * 2f) {
+                    canvas.drawLine(
+                        rect.left + padX,
+                        rect.top + 0.8f * density,
+                        rect.right - padX,
+                        rect.top + 0.8f * density,
+                        bevelPaint
+                    )
+                }
+            }
+
             if (isSpace && isSpaceCursorActive) {
                 spaceCursorPaint.color = Color.argb(
                     64,
@@ -469,20 +504,31 @@ class KeyboardView @JvmOverloads constructor(
 
             textPaint.color = when {
                 isSpace && isSpaceCursorActive -> accentTint
+                isSpace -> theme.keyLabelColorSecondary
                 isEnter && theme.accentKeyColor != null -> theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
                 else -> theme.keyLabelColorPrimary
             }
 
             val displayText = if (isSpace && isSpaceCursorActive) "◀   Cursor   ▶" else getDisplayText(key)
             val savedSize = textPaint.textSize
-            if (isSpace && isSpaceCursorActive) {
-                textPaint.textSize = (theme.keyLabelSizeSp * density * 0.82f)
+            if (isSpace) {
+                textPaint.textSize = (theme.keyLabelSizeSp * density * if (isSpaceCursorActive) 0.84f else 0.76f)
             } else if (key.code.length > 2) {
                 textPaint.textSize = (theme.keyLabelSizeSp * density * 0.82f)
             }
             val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
             canvas.drawText(displayText, rect.centerX(), textY, textPaint)
             textPaint.textSize = savedSize
+
+            if (isShift && shiftState != ShiftState.OFF) {
+                shiftDotPaint.color = accentTint
+                canvas.drawCircle(
+                    rect.centerX(),
+                    rect.bottom - (5.5f * density),
+                    2.2f * density,
+                    shiftDotPaint
+                )
+            }
 
             if (showSecondarySymbols && key.secondaryCode != null && layer == KeyboardLayer.ALPHA) {
                 val secX = rect.right - (4.5f * density)
@@ -514,7 +560,8 @@ class KeyboardView @JvmOverloads constructor(
             key.code.length == 1 && key.code[0].isLetter() -> {
                 if (shiftState != ShiftState.OFF) key.code.uppercase() else key.code.lowercase()
             }
-            key.code == " " -> "Keybord"
+            key.code == " " -> spaceBarLabel
+            key.code == "Enter" && theme.accentKeyColor != null -> "➤"
             else -> key.code
         }
     }

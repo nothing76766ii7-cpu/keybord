@@ -72,7 +72,7 @@ class OnboardingActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val versionPill = TextView(this).apply {
-            text = "v1.1.7"
+            text = "v1.1.8"
             textSize = 11.5f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(UiKit.ACCENT_PRIMARY)

@@ -84,7 +84,7 @@ class KeyPopPreviewView @JvmOverloads constructor(
         val margin = 4f * density
         val maxLeft = (width.toFloat() - popWidth - margin).coerceAtLeast(margin)
         val popLeft = (bounds.centerX() - popWidth / 2f).coerceIn(margin, maxLeft)
-        val popTop = (bounds.top - popHeight - (6f * density)).coerceAtLeast(margin)
+        val popTop = (bounds.top - popHeight - (8f * density)).coerceAtLeast(margin)
         val popRect = RectF(popLeft, popTop, popLeft + popWidth, popTop + popHeight)
 
         // Composite semi-transparent key face colors over surface so popup remains opaque & legible
@@ -93,19 +93,40 @@ class KeyPopPreviewView @JvmOverloads constructor(
             theme.keyboardBackground.colorStart
         )
         borderPaint.color = theme.keyBorderColor
-        borderPaint.strokeWidth = 2f * density
+        borderPaint.strokeWidth = 1.5f * density
 
-        val radius = theme.keyCornerRadiusDp * density * scale
+        val radius = (theme.keyCornerRadiusDp * density * scale).coerceAtLeast(10f * density)
+        // Soft drop shadow
+        haloPaint.style = Paint.Style.FILL
+        haloPaint.color = Color.argb(85, 0, 0, 0)
+        canvas.drawRoundRect(
+            RectF(popRect.left, popRect.top + 3f * density, popRect.right, popRect.bottom + 4f * density),
+            radius,
+            radius,
+            haloPaint
+        )
+
         if (theme.effectStyle == EffectStyle.CYBER_NEON ||
             theme.effectStyle == EffectStyle.MECH_GLOW ||
             theme.effectStyle == EffectStyle.GLOW_FLOW
         ) {
+            haloPaint.style = Paint.Style.STROKE
             haloPaint.color = theme.trailColor
-            haloPaint.alpha = 72
-            haloPaint.strokeWidth = 4.5f * density
+            haloPaint.alpha = 80
+            haloPaint.strokeWidth = 4f * density
             canvas.drawRoundRect(popRect, radius, radius, haloPaint)
         }
+
+        // Draw bubble + bottom pointer caret pointing to keycap
+        val caretX = bounds.centerX().coerceIn(popRect.left + radius, popRect.right - radius)
+        val caretPath = Path().apply {
+            moveTo(caretX - 6f * density, popRect.bottom - 1f * density)
+            lineTo(caretX, popRect.bottom + 6f * density)
+            lineTo(caretX + 6f * density, popRect.bottom - 1f * density)
+            close()
+        }
         canvas.drawRoundRect(popRect, radius, radius, bgPaint)
+        canvas.drawPath(caretPath, bgPaint)
         canvas.drawRoundRect(popRect, radius, radius, borderPaint)
 
         val textY = popRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2

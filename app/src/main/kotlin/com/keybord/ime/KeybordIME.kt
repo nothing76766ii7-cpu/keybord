@@ -24,6 +24,7 @@ import androidx.core.content.ContextCompat
 import com.keyboard.engine.magicwrite.MagicWritingCoordinator
 import com.keyboard.engine.magicwrite.WritingStyle
 import com.keyboard.engine.rambler.ChunkState
+import com.keyboard.engine.rambler.RamblerConfig
 import com.keyboard.engine.rambler.RamblerController
 import com.keyboard.engine.rambler.RamblerSessionState
 import com.keyboard.engine.rambler.RamblerUndoStateMachine
@@ -33,9 +34,12 @@ import com.keybord.clipboard.KeybordClipboardManager
 import com.keybord.engine.glide.*
 import com.keybord.engine.vocab.*
 import com.keybord.profile.AppProfileRepository
+import com.keybord.settings.KeyboardLayoutCustomizeActivity
 import com.keybord.settings.KeybordSettingsActivity
+import com.keybord.settings.WritingToolsActivity
 import com.keybord.theme.BuiltInThemes
 import com.keybord.theme.KeyboardLayoutPrefs
+import com.keybord.theme.ThemeGalleryActivity
 import com.keybord.theme.ThemeModel
 import com.keybord.theme.ThemeRepository
 import com.keybord.voice.MicPermissionActivity
@@ -45,7 +49,7 @@ import com.keybord.voice.VoiceRamblerManager
  * Master InputMethodService for Keybord.
  * Unifies Unlimited Clipboard, Visual Customization, SHARK2 Glide Typing,
  * Adaptive Vocabulary + Personal Dictionary Sync, Hinglish Bilingual Support,
- * Emoji Panel, Voice Rambler Dictation, and Magic Writer Proofread & Tone Rewriting.
+ * Emoji Panel, Expanded Tools Drawer, Voice Rambler Dictation, and Magic Writer.
  */
 class KeybordIME : InputMethodService() {
 
@@ -69,6 +73,7 @@ class KeybordIME : InputMethodService() {
     private lateinit var gestureOverlayView: GestureOverlayView
     private lateinit var popPreviewView: KeyPopPreviewView
     private lateinit var emojiPanelView: EmojiPanelView
+    private lateinit var expandedToolsPanel: ExpandedToolsPanelView
     private lateinit var inlineClipboardTray: InlineClipboardTrayView
 
     // State & Prefs
@@ -147,7 +152,14 @@ class KeybordIME : InputMethodService() {
         syncUserVocabularyIntoLexicon()
 
         // 3. Initialize Voice Rambler Controller & SpeechRecognizer Manager
-        ramblerController = RamblerController()
+        val writingPrefs = getSharedPreferences(WritingToolsActivity.PREFS_NAME, MODE_PRIVATE)
+        ramblerController = RamblerController(
+            config = RamblerConfig(
+                autoPunctuationEnabled = writingPrefs.getBoolean(WritingToolsActivity.KEY_RAMBLER_SMART_PUNCT, true),
+                disfluencyFilterEnabled = writingPrefs.getBoolean(WritingToolsActivity.KEY_RAMBLER_FILLERS, true),
+                preserveRewrittenOnRevert = writingPrefs.getBoolean(WritingToolsActivity.KEY_RAMBLER_DUAL_UNDO, true)
+            )
+        )
         ramblerController.undoStateMachine.listener = object : RamblerUndoStateMachine.UndoStateListener {
             override fun onChunkStateChanged(chunk: TextChunk, newState: ChunkState) {
                 if (::suggestionStripView.isInitialized) {
@@ -251,6 +263,12 @@ class KeybordIME : InputMethodService() {
             isDoubleSpacePeriodEnabled = true
             isHinglishEnabled = true
         }
+        if (::keyboardView.isInitialized) {
+            keyboardView.spaceBarLabel = if (isHinglishEnabled) "English + Hinglish" else "English • QWERTY"
+        }
+        if (::expandedToolsPanel.isInitialized) {
+            expandedToolsPanel.isHinglishEnabled = isHinglishEnabled
+        }
         if (::lexicon.isInitialized && prevHinglish != isHinglishEnabled) {
             lexicon.clear()
             lexicon.loadFromAssets(this, includeHinglish = isHinglishEnabled)
@@ -344,6 +362,9 @@ class KeybordIME : InputMethodService() {
                 vocabEngine.deleteLearnedWord(word)
                 refreshPredictions()
             }
+            onToolsGridClicked = {
+                toggleToolsPanel()
+            }
             onClipboardIconClicked = {
                 toggleInlineClipboardTray()
             }
@@ -396,6 +417,7 @@ class KeybordIME : InputMethodService() {
             showNumberRow = layoutPrefs.showNumberRow
             showSecondarySymbols = layoutPrefs.showSecondarySymbols
             vibrationDurationMs = layoutPrefs.vibrationDurationMs
+            spaceBarLabel = if (isHinglishEnabled) "English + Hinglish" else "English • QWERTY"
             layoutParams = FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -475,7 +497,62 @@ class KeybordIME : InputMethodService() {
         }
         rootContainer.addView(emojiPanelView)
 
-        // 4. Inline Clipboard Tray (initially hidden)
+        // 4. Stitch Expanded Tools & Quick Rambler Drawer (initially hidden)
+        expandedToolsPanel = ExpandedToolsPanelView(this).apply {
+            theme = activeTheme
+            isHinglishEnabled = this@KeybordIME.isHinglishEnabled
+            isOneHandedEnabled = layoutPrefs.oneHandedEnabled
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            onCollapseClicked = { showKeyboardMain() }
+            onOpenClipboardClicked = { toggleInlineClipboardTray() }
+            onOpenEmojiClicked = { toggleEmojiPanel() }
+            onOpenWritingToolsClicked = { launchActivity(WritingToolsActivity::class.java) }
+            onOpenLayoutStudioClicked = { launchActivity(KeyboardLayoutCustomizeActivity::class.java) }
+            onToggleOneHandedClicked = {
+                layoutPrefs.oneHandedEnabled = !layoutPrefs.oneHandedEnabled
+                isOneHandedEnabled = layoutPrefs.oneHandedEnabled
+                applyTheme(baseTheme)
+            }
+            onOpenThemesClicked = { launchActivity(ThemeGalleryActivity::class.java) }
+            onOpenSettingsClicked = { launchSettings() }
+            onToggleHinglishClicked = {
+                val next = !this@KeybordIME.isHinglishEnabled
+                getSharedPreferences("keybord_typing_prefs", MODE_PRIVATE)
+                    .edit().putBoolean("hinglish_typing", next).apply()
+                loadTypingPreferences()
+                refreshPredictions()
+            }
+            onRamblerToggleRawClicked = {
+                if (ramblerController.toggleTranscriptRevert()) {
+                    val raw = ramblerController.isShowingRawTranscript()
+                    setRawState(raw)
+                    showRamblerRevertState(raw)
+                }
+            }
+            onMagicFixItClicked = {
+                showKeyboardMain()
+                performMagicProofread()
+            }
+            onMagicStyleClicked = { style ->
+                showKeyboardMain()
+                performMagicRewrite(style)
+            }
+            onPasteClipClicked = { text ->
+                currentInputConnection?.commitText(text, 1)
+                showKeyboardMain()
+            }
+            onMicClicked = {
+                showKeyboardMain()
+                onMicButtonPressed()
+            }
+        }
+        rootContainer.addView(expandedToolsPanel)
+
+        // 5. Inline Clipboard Tray (initially hidden)
         inlineClipboardTray = InlineClipboardTrayView(this).apply {
             theme = activeTheme
             visibility = View.GONE
@@ -1413,15 +1490,37 @@ class KeybordIME : InputMethodService() {
 
     private fun showKeyboardMain() {
         if (::emojiPanelView.isInitialized) emojiPanelView.visibility = View.GONE
+        if (::expandedToolsPanel.isInitialized) expandedToolsPanel.visibility = View.GONE
         if (::inlineClipboardTray.isInitialized) inlineClipboardTray.visibility = View.GONE
         if (::keyboardFrame.isInitialized) keyboardFrame.visibility = View.VISIBLE
-        if (::suggestionStripView.isInitialized) suggestionStripView.setEmojiPanelActive(false)
+        if (::suggestionStripView.isInitialized) {
+            suggestionStripView.setEmojiPanelActive(false)
+            suggestionStripView.setToolsPanelActive(false)
+        }
+    }
+
+    private fun toggleToolsPanel() {
+        if (expandedToolsPanel.visibility == View.VISIBLE) {
+            showKeyboardMain()
+        } else {
+            val allClips = clipboardManager.storage.getAllItems()
+            expandedToolsPanel.updateClipboardPreview(allClips.size, allClips.firstOrNull())
+            expandedToolsPanel.isHinglishEnabled = isHinglishEnabled
+            expandedToolsPanel.isOneHandedEnabled = layoutPrefs.oneHandedEnabled
+            expandedToolsPanel.setRawState(ramblerController.isShowingRawTranscript())
+            emojiPanelView.visibility = View.GONE
+            inlineClipboardTray.visibility = View.GONE
+            keyboardFrame.visibility = View.GONE
+            expandedToolsPanel.visibility = View.VISIBLE
+            suggestionStripView.setToolsPanelActive(true)
+        }
     }
 
     private fun toggleEmojiPanel() {
         if (emojiPanelView.visibility == View.VISIBLE) {
             showKeyboardMain()
         } else {
+            expandedToolsPanel.visibility = View.GONE
             inlineClipboardTray.visibility = View.GONE
             keyboardFrame.visibility = View.GONE
             emojiPanelView.visibility = View.VISIBLE
@@ -1434,7 +1533,9 @@ class KeybordIME : InputMethodService() {
             showKeyboardMain()
         } else {
             emojiPanelView.visibility = View.GONE
+            expandedToolsPanel.visibility = View.GONE
             suggestionStripView.setEmojiPanelActive(false)
+            suggestionStripView.setToolsPanelActive(false)
             inlineClipboardTray.attachClipboard(
                 manager = clipboardManager,
                 onSelect = { text ->
@@ -1450,11 +1551,15 @@ class KeybordIME : InputMethodService() {
         }
     }
 
-    private fun launchSettings() {
-        val intent = Intent(this, KeybordSettingsActivity::class.java).apply {
+    private fun launchActivity(activityClass: Class<*>) {
+        val intent = Intent(this, activityClass).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
         }
         startActivity(intent)
+    }
+
+    private fun launchSettings() {
+        launchActivity(KeybordSettingsActivity::class.java)
     }
 
     private fun applyTheme(theme: ThemeModel) {
@@ -1473,6 +1578,12 @@ class KeybordIME : InputMethodService() {
         if (::gestureOverlayView.isInitialized) gestureOverlayView.theme = effective
         if (::popPreviewView.isInitialized) popPreviewView.theme = effective
         if (::emojiPanelView.isInitialized) emojiPanelView.theme = effective
+        if (::expandedToolsPanel.isInitialized) {
+            expandedToolsPanel.theme = effective
+            if (::layoutPrefs.isInitialized) {
+                expandedToolsPanel.isOneHandedEnabled = layoutPrefs.oneHandedEnabled
+            }
+        }
         if (::inlineClipboardTray.isInitialized) inlineClipboardTray.theme = effective
     }
 }

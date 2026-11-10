@@ -79,7 +79,7 @@ class AboutActivity : AppCompatActivity() {
         )
         brandCard.addView(
             TextView(this).apply {
-                text = "Version 1.1.7"
+                text = "Version 1.1.8"
                 textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(UiKit.ACCENT_PRIMARY)
@@ -92,7 +92,7 @@ class AboutActivity : AppCompatActivity() {
         )
         brandCard.addView(
             TextView(this).apply {
-                text = "The keyboard that gets out of your way — built for speed, Hinglish fluency, deep layout customisation, and total on-device privacy."
+                text = "The keyboard that gets out of your way — Obsidian Tactile & Clean Porcelain design, Hinglish fluency, deep layout customisation, and total on-device privacy."
                 textSize = 13.5f
                 setTextColor(UiKit.TEXT_SECONDARY)
                 gravity = Gravity.CENTER
@@ -110,13 +110,14 @@ class AboutActivity : AppCompatActivity() {
         )
         content.addView(
             buildFeatureCard(
-                "⚡ What's Inside v1.1.7",
-                "• Bilingual English + Hinglish glide typing, suggestions & auto-correct\n" +
-                    "• Live Height & Buttons Customisation Studio with interactive test preview\n" +
-                    "• Smooth Gboard-grade multi-touch rollover, 360ms secondary long-press & low-latency Space cursor scrub\n" +
+                "⚡ What's Inside v1.1.8",
+                "• Obsidian Tactile & Clean Porcelain UI across IME, Tools Drawer & Settings\n" +
+                    "• Bilingual English + Hinglish glide typing, suggestions & auto-correct\n" +
+                    "• Expanded Tools & Rambler quick panel + dedicated Writing Tools studio\n" +
+                    "• Live Height & Buttons Customisation Studio + Accent Swatches\n" +
+                    "• Smooth Gboard-grade rollover, 360ms secondary long-press & Space cursor scrub\n" +
                     "• Built-in Emoji Picker with Recents & Hinglish/English search\n" +
-                    "• Unlimited SQLite AES clipboard with inline & full-screen managers\n" +
-                    "• Voice Rambler cleanup, Magic Writer tones & Rust native core"
+                    "• Unlimited SQLite AES clipboard vault & Rust native core"
             )
         )
 

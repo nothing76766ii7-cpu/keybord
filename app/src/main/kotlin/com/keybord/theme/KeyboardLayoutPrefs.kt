@@ -75,11 +75,17 @@ class KeyboardLayoutPrefs(context: Context) {
         get() = prefs.getFloat(KEY_ONE_HANDED_WIDTH_PCT, 84f).coerceIn(68f, 96f)
         set(value) = prefs.edit().putFloat(KEY_ONE_HANDED_WIDTH_PCT, value.coerceIn(68f, 96f)).apply()
 
+    var accentColorOverride: Int
+        get() = prefs.getInt(KEY_ACCENT_COLOR_OVERRIDE, 0)
+        set(value) = prefs.edit().putInt(KEY_ACCENT_COLOR_OVERRIDE, value).apply()
+
     /**
-     * Merges user layout/button customisations onto the supplied ThemeModel.
+     * Merges user layout/button/accent customisations onto the supplied ThemeModel.
      */
     fun applyTo(baseTheme: ThemeModel): ThemeModel {
         val useCustom = customGeometryEnabled
+        val customAccent = accentColorOverride
+        val hasAccentOverride = customAccent != 0
         val oneHanded = OneHandedConfig(
             enabled = if (oneHandedEnabled) true else baseTheme.oneHandedMode.enabled,
             gravityRight = if (oneHandedEnabled) oneHandedGravityRight else baseTheme.oneHandedMode.gravityRight,
@@ -95,6 +101,13 @@ class KeyboardLayoutPrefs(context: Context) {
             keyLabelSizeSp = if (useCustom) labelSizeSp else baseTheme.keyLabelSizeSp,
             keyPopPreviewEnabled = popPreviewEnabled,
             keyPopPreviewSize = PopPreviewSize.values()[popPreviewSizeOrdinal],
+            accentKeyColor = if (hasAccentOverride) customAccent else baseTheme.accentKeyColor,
+            accentKeyTextColor = if (hasAccentOverride) {
+                if (android.graphics.Color.luminance(customAccent) > 0.55f) android.graphics.Color.BLACK else android.graphics.Color.WHITE
+            } else {
+                baseTheme.accentKeyTextColor
+            },
+            trailColor = if (hasAccentOverride) customAccent else baseTheme.trailColor,
             oneHandedMode = oneHanded
         )
     }
@@ -121,5 +134,6 @@ class KeyboardLayoutPrefs(context: Context) {
         private const val KEY_ONE_HANDED_ENABLED = "one_handed_enabled"
         private const val KEY_ONE_HANDED_RIGHT = "one_handed_right"
         private const val KEY_ONE_HANDED_WIDTH_PCT = "one_handed_width_pct"
+        private const val KEY_ACCENT_COLOR_OVERRIDE = "accent_color_override"
     }
 }
