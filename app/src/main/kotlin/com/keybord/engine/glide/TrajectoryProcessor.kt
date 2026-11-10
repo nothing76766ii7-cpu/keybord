@@ -41,7 +41,7 @@ class TrajectoryProcessor(private val config: GlideEngineConfig) {
         val endTime = points.last().timestamp
         val duration = endTime - startTime
 
-        if (startTime - lastTapTimestamp < config.minTapIntervalMs) {
+        if (lastTapTimestamp > 0L && startTime >= lastTapTimestamp && startTime - lastTapTimestamp < config.minTapIntervalMs) {
             return ValidationResult(false, ThrottleReason.SHORT_TIME_FROM_LAST_TAP)
         }
 
@@ -70,7 +70,13 @@ class TrajectoryProcessor(private val config: GlideEngineConfig) {
         minY = min(minY, lastPoint.y)
         maxY = max(maxY, lastPoint.y)
 
-        if (totalDistance < config.minDistanceDp) {
+        val avgKeySize = if (keyPositions.isNotEmpty()) {
+            keyPositions.values.map { (it.bounds.width() + it.bounds.height()) * 0.5f }.average().toFloat()
+        } else {
+            config.minDistanceDp
+        }
+        val minDistanceThreshold = max(config.minDistanceDp, avgKeySize * 0.35f)
+        if (totalDistance < minDistanceThreshold) {
             return ValidationResult(false, ThrottleReason.SHORT_GESTURE_DISTANCE)
         }
 

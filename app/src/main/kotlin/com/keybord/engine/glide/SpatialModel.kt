@@ -12,6 +12,24 @@ class SpatialModel(
 ) {
 
     /**
+     * Average key dimension in px derived from current layout bounds.
+     * Ensures Gaussian sigma and proximity radii scale cleanly across all screen densities.
+     */
+    val keyUnitPx: Float = run {
+        val avg = keyPositions.values
+            .mapNotNull { kp ->
+                val w = kotlin.math.abs(kp.bounds.right - kp.bounds.left)
+                val h = kotlin.math.abs(kp.bounds.bottom - kp.bounds.top)
+                val u = (w + h) * 0.5f
+                if (u > 1f) u else null
+            }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+            ?.toFloat()
+        (avg ?: 80f).coerceAtLeast(40f)
+    }
+
+    /**
      * Calculates the Gaussian probability density of touch point (px, py)
      * given target key center (kx, ky).
      */
@@ -23,8 +41,10 @@ class SpatialModel(
         val key = keyPositions[keyChar.lowercaseChar()] ?: return 0.00001f
 
         // Dynamic tolerance scaling: higher swipe speed widens sigma (corner cutting compensation)
-        val speedFactor = 1.0f + (velocityPxPerMs * config.velocityToleranceFactor).coerceIn(0f, 2.5f)
-        val sigma = config.spatialSigmaDp * speedFactor
+        val normalizedVelocity = velocityPxPerMs / (keyUnitPx / 100f).coerceAtLeast(0.5f)
+        val speedFactor = 1.0f + (normalizedVelocity * config.velocityToleranceFactor * 0.5f).coerceIn(0f, 2.0f)
+        val baseSigma = max(config.spatialSigmaDp, keyUnitPx * 0.48f)
+        val sigma = baseSigma * speedFactor
         val twoSigmaSq = 2f * sigma * sigma
 
         val dx = point.x - key.centerX
@@ -54,7 +74,7 @@ class SpatialModel(
         val lastScore = pointKeyDistanceScore(trajectory.last(), word.last(), averageVelocity)
 
         // Prune immediately if start or end keys are excessively distant
-        if (firstScore < 0.001f || lastScore < 0.001f) {
+        if (firstScore < 0.0005f || lastScore < 0.0005f) {
             return 0.0001f
         }
 
@@ -89,13 +109,15 @@ class SpatialModel(
     }
 
     /**
-     * Determines if a touch point is within the proximity of a key.
+     * Determines keys within spatial proximity of a touch point, scaled to actual key geometry.
      */
-    fun findProximityKeys(point: TouchPoint, maxRadiusDp: Float = 48.0f): List<Char> {
+    fun findProximityKeys(point: TouchPoint, maxRadiusPx: Float = keyUnitPx * 1.2f): List<Char> {
         val candidates = mutableListOf<Pair<Char, Float>>()
         for ((char, key) in keyPositions) {
             val d = hypot(point.x - key.centerX, point.y - key.centerY)
-            if (d <= maxRadiusDp) {
+            val insideBounds = point.x in key.bounds.left..key.bounds.right &&
+                point.y in key.bounds.top..key.bounds.bottom
+            if (insideBounds || d <= maxRadiusPx) {
                 candidates.add(char to d)
             }
         }

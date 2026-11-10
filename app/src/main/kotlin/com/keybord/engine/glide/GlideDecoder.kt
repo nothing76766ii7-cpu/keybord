@@ -30,9 +30,13 @@ class GlideDecoder(
      * Decodes a raw touch swipe trajectory into a ranked list of candidate words.
      * Returns empty list if trajectory is throttled or invalid.
      */
-    fun decodeGesture(rawPoints: List<TouchPoint>): List<GlideCandidate> {
+    fun decodeGesture(rawPoints: List<TouchPoint>, lastTapTs: Long = lastTapTimestamp): List<GlideCandidate> {
+        if (keyPositions.isEmpty()) {
+            return emptyList()
+        }
+
         // Step 1: Trajectory Throttling & Validation (SHORT_TIME, SHORT_DIST, WITHIN_ONE_KEY)
-        val validation = processor.validateTrajectory(rawPoints, lastTapTimestamp, keyPositions)
+        val validation = processor.validateTrajectory(rawPoints, lastTapTs, keyPositions)
         if (!validation.isValidGesture) {
             return emptyList()
         }
@@ -49,16 +53,21 @@ class GlideDecoder(
         }
         val avgVelocity = totalDist / durationMs.toFloat()
 
-        // Step 3: Identify Candidate Start and End Keys
-        val startKeys = spatialModel.findProximityKeys(smoothed.first(), maxRadiusDp = 50f)
-        val endKeys = spatialModel.findProximityKeys(smoothed.last(), maxRadiusDp = 50f).toSet()
+        // Step 3: Identify Candidate Start and End Keys (scaled by key geometry)
+        val startKeys = spatialModel.findProximityKeys(smoothed.first())
+        val endKeys = spatialModel.findProximityKeys(smoothed.last()).toSet()
 
         if (startKeys.isEmpty() || endKeys.isEmpty()) {
             return emptyList()
         }
 
-        // Step 4: Extract Key Vertices / Inflection Corners
+        // Step 4: Extract Key Vertices / Inflection Corners and merge with uniform steps
         val cornerIndices = processor.extractCorners(smoothed)
+        val stepSize = max(1, smoothed.size / 20)
+        val sampleIndices = ((stepSize until smoothed.size step stepSize) + cornerIndices + (smoothed.size - 1))
+            .distinct()
+            .sorted()
+            .filter { it in 1 until smoothed.size }
 
         // Step 5: Beam Search Prefix Traversal
         data class BeamNode(
@@ -78,14 +87,15 @@ class GlideDecoder(
         }
 
         val collectedWords = HashSet<String>()
+        val beamLimit = max(config.maxBeamWidth, 64)
 
-        // Step through trajectory points in blocks
-        val stepSize = max(1, smoothed.size / 8)
-        var currentPointIndex = stepSize
-
-        while (currentPointIndex < smoothed.size && beam.isNotEmpty()) {
+        for (currentPointIndex in sampleIndices) {
+            if (beam.isEmpty()) break
             val currentPoint = smoothed[currentPointIndex]
-            val candidateKeysNearPoint = spatialModel.findProximityKeys(currentPoint, maxRadiusDp = 55f)
+            val candidateKeysNearPoint = spatialModel.findProximityKeys(
+                currentPoint,
+                maxRadiusPx = spatialModel.keyUnitPx * 1.3f
+            )
             val nextBeam = mutableListOf<BeamNode>()
 
             for (bNode in beam) {
@@ -105,7 +115,7 @@ class GlideDecoder(
                     }
                 }
 
-                // 2. Self-transition / repeated-letter expansion (e.g. "look", "meet")
+                // 2. Self-transition / repeated-letter expansion (e.g. "look", "meet", "hello")
                 val lastChar = bNode.currentWord.last()
                 val doubleChild = bNode.trieNode.children[lastChar]
                 if (doubleChild != null) {
@@ -119,7 +129,7 @@ class GlideDecoder(
                     )
                 }
 
-                // 3. Keep current node in beam if no close transition found (finger cruising)
+                // 3. Keep current node in beam while finger cruises toward next target key
                 nextBeam.add(
                     BeamNode(
                         trieNode = bNode.trieNode,
@@ -130,22 +140,38 @@ class GlideDecoder(
                 )
             }
 
-            // Prune beam to maxBeamWidth
+            // Prune beam to beamLimit
             nextBeam.sortByDescending { it.cumulativeScore }
-            beam = nextBeam.distinctBy { it.currentWord }.take(config.maxBeamWidth).toMutableList()
-
-            currentPointIndex += stepSize
+            beam = nextBeam.distinctBy { it.currentWord }.take(beamLimit).toMutableList()
         }
 
-        // Gather all completed words reaching end keys
-        for (bNode in beam) {
-            collectCompletedWords(bNode.trieNode, endKeys, collectedWords)
-        }
-
-        // Also check any word currently reached that ends on an end key
+        // Gather completed words ending at endKeys (direct match or 1-step end completion)
         for (bNode in beam) {
             if (bNode.trieNode.isWord && endKeys.contains(bNode.currentWord.last())) {
                 collectedWords.add(bNode.currentWord)
+            }
+            for (endCh in endKeys) {
+                val endChild = bNode.trieNode.children[endCh]
+                if (endChild != null && endChild.isWord && endChild.word != null) {
+                    collectedWords.add(endChild.word!!)
+                }
+                // Handle terminal double letter before lift (e.g. 'all', 'good' style extensions)
+                val repeatLast = bNode.currentWord.last()
+                val nested = bNode.trieNode.children[repeatLast]?.children?.get(endCh)
+                if (nested != null && nested.isWord && nested.word != null) {
+                    collectedWords.add(nested.word!!)
+                }
+            }
+        }
+
+        // Fallback short-word capture: check startKey -> endKey 2-letter words directly (e.g., "to", "in", "on", "hi")
+        for (sc in startKeys) {
+            val sNode = lexicon.root.children[sc] ?: continue
+            for (ec in endKeys) {
+                val twoCharNode = sNode.children[ec]
+                if (twoCharNode != null && twoCharNode.isWord && twoCharNode.word != null) {
+                    collectedWords.add(twoCharNode.word!!)
+                }
             }
         }
 
@@ -154,7 +180,7 @@ class GlideDecoder(
 
         for (word in collectedWords) {
             val spatialScore = spatialModel.alignWordTrajectory(word, smoothed, avgVelocity)
-            if (spatialScore < 0.05f) continue
+            if (spatialScore < 0.005f) continue
 
             val baseFreq = lexicon.getFrequency(word)
             // Log-scale LM probability
@@ -174,20 +200,5 @@ class GlideDecoder(
 
         results.sort()
         return results.take(8)
-    }
-
-    private fun collectCompletedWords(
-        node: TrieLexicon.Node,
-        endKeys: Set<Char>,
-        outWords: MutableSet<String>,
-        maxDepth: Int = 3
-    ) {
-        if (node.isWord && node.word != null && endKeys.contains(node.word!!.last())) {
-            outWords.add(node.word!!)
-        }
-        if (maxDepth <= 0) return
-        for (child in node.children.values) {
-            collectCompletedWords(child, endKeys, outWords, maxDepth - 1)
-        }
     }
 }

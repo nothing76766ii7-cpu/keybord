@@ -28,17 +28,23 @@ class KeyboardView @JvmOverloads constructor(
     private val keyList = mutableListOf<Key>()
     private val keyPositions = mutableMapOf<Char, KeyPosition>()
     private val touchPoints = mutableListOf<TouchPoint>()
+    private var lastTapTimestamp = 0L
+
+    private val lexicon = TrieLexicon().apply {
+        loadFromAssets(context)
+    }
 
     // GlideDecoder instantiated once (PRD 2.2b)
-    private val glideDecoder = GlideDecoder(
+    private var glideDecoder = GlideDecoder(
         keyPositions = keyPositions,
-        lexicon = TrieLexicon().also { it.loadDefaultVocabulary() }
+        lexicon = lexicon
     )
 
     var overlayView: GestureOverlayView? = null
     var suggestionStrip: SuggestionStrip? = null
     var onKeyTapListener: ((Char) -> Unit)? = null
     var onWordCommittedListener: ((String) -> Unit)? = null
+    var onGlideCandidatesListener: ((List<GlideCandidate>) -> Unit)? = null
 
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#313244")
@@ -69,7 +75,7 @@ class KeyboardView @JvmOverloads constructor(
         recomputeKeys(w, h)
     }
 
-    // PRD 2.2a: After key layout is measured, build keyPositions map
+    // PRD 2.2a / FIX D: After key layout is measured, rebuild keyPositions map and refresh decoder
     private fun recomputeKeys(width: Int, height: Int) {
         keyList.clear()
         keyPositions.clear()
@@ -86,12 +92,13 @@ class KeyboardView @JvmOverloads constructor(
                 val rect = RectF(left + 4f, top + 4f, right - 4f, bottom - 4f)
                 val key = Key(ch, rect)
                 keyList.add(key)
-                keyPositions[ch] = KeyPosition(
-                    character = ch,
+                keyPositions[ch.lowercaseChar()] = KeyPosition(
+                    character = ch.lowercaseChar(),
                     bounds = rect
                 )
             }
         }
+        glideDecoder.updateKeyPositions(HashMap(keyPositions))
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -105,9 +112,10 @@ class KeyboardView @JvmOverloads constructor(
         }
     }
 
-    // PRD 2.2c: Touch handling with gesture trail and decode
+    // PRD 2.2c / FIX A: Touch handling with gesture trail and ACTION_UP decode
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val point = TouchPoint(event.x, event.y, event.eventTime)
+        val now = System.currentTimeMillis()
+        val point = TouchPoint(event.x, event.y, now, event.pressure)
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -124,11 +132,16 @@ class KeyboardView @JvmOverloads constructor(
             }
             MotionEvent.ACTION_UP -> {
                 touchPoints.add(point)
-                val candidates = glideDecoder.decodeGesture(touchPoints)
+                val candidates = glideDecoder.decodeGesture(touchPoints, lastTapTimestamp)
                 if (candidates.isNotEmpty()) {
-                    val topWord = candidates.first().word
-                    suggestionStrip?.setCandidates(candidates.map { it.word })
-                    commitTopCandidate(topWord)
+                    val listener = onGlideCandidatesListener
+                    if (listener != null) {
+                        listener.invoke(candidates)
+                    } else {
+                        val topWord = candidates.first().word
+                        suggestionStrip?.setCandidates(candidates.map { it.word })
+                        commitTopCandidate(topWord)
+                    }
                 } else {
                     val keyAtPoint = findKeyAt(event.x, event.y)
                     if (keyAtPoint != null) {
@@ -136,6 +149,9 @@ class KeyboardView @JvmOverloads constructor(
                     }
                 }
                 overlayView?.clearTrail()
+                touchPoints.clear()
+                lastTapTimestamp = now
+                glideDecoder.notifyTap(now)
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {

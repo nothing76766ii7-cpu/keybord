@@ -57,17 +57,19 @@ class KeybordIME : InputMethodService() {
     private var isAutoCapitaliseEnabled = true
     private var isDoubleSpacePeriodEnabled = true
 
-    // Track for manual correction detection
+    // Track for manual correction and glide alternatives
     private var lastCommittedWord: String? = null
     private var wasLastCommittedFromSuggestion = false
+    private var lastGlideCommittedWord: String? = null
+    private var isSwipeSession = false
 
     override fun onCreate() {
         super.onCreate()
         configureImeWindow()
 
-        // 1. Initialize Lexicon & Glide Engine
+        // 1. Initialize Lexicon (assets/wordlist.txt + starter fallback) & Glide Engine
         lexicon = TrieLexicon().apply {
-            loadDefaultVocabulary()
+            loadFromAssets(this@KeybordIME)
         }
         glideDecoder = GlideDecoder(emptyMap(), lexicon)
 
@@ -247,6 +249,9 @@ class KeybordIME : InputMethodService() {
         configureImeWindow()
         currentWordPrefix.clear()
         recentContextWords.clear()
+        lastGlideCommittedWord = null
+        isSwipeSession = false
+        touchPoints.clear()
 
         // 1. Check Per-App Profiles (Feature 5)
         val profile = profileRepo.getProfileForPackage(info.packageName)
@@ -278,20 +283,25 @@ class KeybordIME : InputMethodService() {
 
         val x = event.x
         val y = event.y
-        val time = event.eventTime
+        val now = System.currentTimeMillis()
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 touchPoints.clear()
-                touchPoints.add(TouchPoint(x, y, time, event.pressure))
-                gestureOverlayView.addPoint(x, y)
+                isSwipeSession = keyboardView.isAlphabeticKeyAt(x, y)
+                if (isSwipeSession) {
+                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                    gestureOverlayView.addPoint(x, y)
+                }
                 keyboardView.handleTouchEvent(event)
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-                touchPoints.add(TouchPoint(x, y, time, event.pressure))
-                gestureOverlayView.addPoint(x, y)
+                if (isSwipeSession) {
+                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                    gestureOverlayView.addPoint(x, y)
+                }
                 keyboardView.handleTouchEvent(event)
                 return true
             }
@@ -299,25 +309,41 @@ class KeybordIME : InputMethodService() {
             MotionEvent.ACTION_UP -> {
                 gestureOverlayView.clearTrail()
 
-                // Check if valid swipe
-                if (touchPoints.size > 2) {
-                    val candidates = glideDecoder.decodeGesture(touchPoints)
+                if (isSwipeSession) {
+                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                    val pointsSnapshot = touchPoints.toList()
+                    touchPoints.clear()
+                    isSwipeSession = false
+
+                    val currentPositions = keyboardView.getKeyPositions()
+                    if (currentPositions.isNotEmpty()) {
+                        glideDecoder.updateKeyPositions(currentPositions)
+                    }
+
+                    val candidates = if (pointsSnapshot.size >= 2) {
+                        glideDecoder.decodeGesture(pointsSnapshot)
+                    } else {
+                        emptyList()
+                    }
+
                     if (candidates.isNotEmpty()) {
-                        keyboardView.handleTouchEvent(event) // Clears pressed state
-                        val bestWord = candidates.first().word
-                        commitWordWithSpace(bestWord, LearningEvent.NORMAL_TYPING)
-                        suggestionStripView.setCandidates(candidates.map { it.word })
+                        keyboardView.cancelActiveTouch()
+                        onGlideCandidates(candidates)
+                        glideDecoder.notifyTap(now)
                         return true
                     }
+                } else {
+                    touchPoints.clear()
                 }
 
                 // Fallback to discrete tap
-                glideDecoder.notifyTap(time)
+                glideDecoder.notifyTap(now)
                 return keyboardView.handleTouchEvent(event)
             }
 
             MotionEvent.ACTION_CANCEL -> {
                 touchPoints.clear()
+                isSwipeSession = false
                 gestureOverlayView.clearTrail()
                 return keyboardView.handleTouchEvent(event)
             }
@@ -325,8 +351,43 @@ class KeybordIME : InputMethodService() {
         return false
     }
 
+    private fun onGlideCandidates(candidates: List<GlideCandidate>) {
+        val ic = currentInputConnection ?: return
+        val topWord = candidates.first().word
+        val committedWord = if (keyboardView.shiftState != KeyboardView.ShiftState.OFF) {
+            if (keyboardView.shiftState == KeyboardView.ShiftState.CAPS_LOCK) {
+                topWord.uppercase()
+            } else {
+                keyboardView.shiftState = KeyboardView.ShiftState.OFF
+                topWord.replaceFirstChar { it.uppercase() }
+            }
+        } else {
+            topWord
+        }
+
+        ic.beginBatchEdit()
+        ic.commitText("$committedWord ", 1)
+        ic.endBatchEdit()
+
+        vocabEngine.onWordCommitted(committedWord, recentContextWords, LearningEvent.NORMAL_TYPING)
+        addContextWord(committedWord)
+        currentWordPrefix.clear()
+
+        lastCommittedWord = committedWord
+        lastGlideCommittedWord = committedWord
+        wasLastCommittedFromSuggestion = false
+
+        val alternatives = if (candidates.size > 1) {
+            candidates.drop(1).map { it.word }
+        } else {
+            listOf(committedWord)
+        }
+        suggestionStripView.setCandidates(alternatives)
+    }
+
     private fun handleKeyTap(key: String) {
         val ic = currentInputConnection ?: return
+        lastGlideCommittedWord = null
 
         when (key) {
             "⌫" -> {
@@ -427,7 +488,9 @@ class KeybordIME : InputMethodService() {
 
     private fun commitWordWithSpace(word: String, event: LearningEvent) {
         val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
         ic.commitText("$word ", 1)
+        ic.endBatchEdit()
 
         vocabEngine.onWordCommitted(word, recentContextWords, event)
         addContextWord(word)
@@ -439,6 +502,25 @@ class KeybordIME : InputMethodService() {
 
     private fun commitCandidate(selectedWord: String) {
         val ic = currentInputConnection ?: return
+
+        val prevGlide = lastGlideCommittedWord
+        if (prevGlide != null && currentWordPrefix.isEmpty()) {
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(prevGlide.length + 1, 0)
+            ic.commitText("$selectedWord ", 1)
+            ic.endBatchEdit()
+            lastGlideCommittedWord = null
+            vocabEngine.onManualCorrection(prevGlide, selectedWord, recentContextWords)
+            if (recentContextWords.isNotEmpty() && recentContextWords.last() == prevGlide) {
+                recentContextWords[recentContextWords.lastIndex] = selectedWord
+            } else {
+                addContextWord(selectedWord)
+            }
+            lastCommittedWord = selectedWord
+            wasLastCommittedFromSuggestion = true
+            refreshPredictions()
+            return
+        }
 
         // Delete currently typed prefix if present
         if (currentWordPrefix.isNotEmpty()) {

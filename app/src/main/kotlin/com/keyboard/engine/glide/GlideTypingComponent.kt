@@ -94,8 +94,10 @@ class TrajectoryProcessor(private val config: GlideEngineConfig) {
             return ValidationResult(false, ThrottleReason.SHORT_GESTURE_DISTANCE)
         }
 
-        val duration = points.last().timestamp - points.first().timestamp
-        if (points.first().timestamp - lastTapTimestamp < config.minTapIntervalMs) {
+        val startTime = points.first().timestamp
+        val endTime = points.last().timestamp
+        val duration = endTime - startTime
+        if (lastTapTimestamp > 0L && startTime >= lastTapTimestamp && startTime - lastTapTimestamp < config.minTapIntervalMs) {
             return ValidationResult(false, ThrottleReason.SHORT_TIME_FROM_LAST_TAP)
         }
         if (duration < config.minDurationMs) {
@@ -114,7 +116,13 @@ class TrajectoryProcessor(private val config: GlideEngineConfig) {
         minX = min(minX, points.last().x); maxX = max(maxX, points.last().x)
         minY = min(minY, points.last().y); maxY = max(maxY, points.last().y)
 
-        if (totalDistance < config.minDistanceDp) {
+        val avgKeySize = if (keyPositions.isNotEmpty()) {
+            keyPositions.values.map { (abs(it.bounds.right - it.bounds.left) + abs(it.bounds.bottom - it.bounds.top)) * 0.5f }.average().toFloat()
+        } else {
+            config.minDistanceDp
+        }
+        val minDistanceThreshold = max(config.minDistanceDp, avgKeySize * 0.35f)
+        if (totalDistance < minDistanceThreshold) {
             return ValidationResult(false, ThrottleReason.SHORT_GESTURE_DISTANCE)
         }
 
@@ -249,12 +257,65 @@ class TrieLexicon {
         return if (current.isWord) current.frequency else 0f
     }
 
+    fun loadFromAssets(context: Context) {
+        loadDefaultVocabulary()
+        try {
+            context.assets.open("wordlist.txt")
+                .bufferedReader()
+                .useLines { lines ->
+                    lines.forEach { line ->
+                        val parts = line.trim().split('\t')
+                        val word = parts.getOrNull(0) ?: return@forEach
+                        val freq = parts.getOrNull(1)?.toFloatOrNull() ?: 500f
+                        if (word.isNotEmpty()) insert(word, freq)
+                    }
+                }
+        } catch (_: Exception) {
+            // Default vocabulary already loaded above
+        }
+    }
+
     fun loadDefaultVocabulary() {
         val defaults = mapOf(
             "the" to 1000f, "be" to 800f, "to" to 750f, "of" to 700f, "and" to 680f,
-            "hello" to 25f, "keyboard" to 15f, "glide" to 12f, "look" to 26f, "good" to 44f
+            "hello" to 250f, "world" to 200f, "keyboard" to 150f, "keybord" to 300f,
+            "glide" to 120f, "look" to 260f, "good" to 440f, "swipe" to 140f
         )
         for ((w, f) in defaults) insert(w, f)
+        listOf(
+            "you", "that", "was", "for", "are", "with", "his", "they", "this", "have",
+            "from", "one", "had", "but", "what", "all", "were", "when", "your", "can",
+            "said", "there", "use", "each", "she", "which", "their", "time", "will", "how",
+            "about", "many", "then", "them", "would", "write", "like", "so", "these", "her",
+            "long", "make", "thing", "see", "him", "two", "has", "more", "day", "could",
+            "come", "did", "number", "sound", "no", "most", "people", "my", "over", "know",
+            "water", "than", "call", "first", "who", "may", "down", "side", "been", "now",
+            "find", "any", "new", "work", "part", "take", "get", "place", "made", "where",
+            "after", "back", "little", "only", "round", "man", "year", "came", "show",
+            "every", "give", "our", "under", "name", "very", "through", "just", "form",
+            "much", "great", "think", "help", "low", "line", "before", "turn", "cause",
+            "same", "mean", "differ", "move", "right", "boy", "old", "too", "does", "tell",
+            "sentence", "set", "three", "want", "air", "well", "also", "play", "small", "end",
+            "put", "home", "read", "hand", "port", "large", "spell", "add", "even", "land",
+            "here", "must", "big", "high", "such", "follow", "act", "why", "ask", "men",
+            "change", "went", "light", "kind", "off", "need", "house", "picture", "try",
+            "again", "animal", "point", "mother", "near", "build", "self", "earth", "father",
+            "head", "stand", "own", "page", "open", "seem", "together", "next", "white",
+            "children", "begin", "got", "walk", "example", "ease", "paper", "often",
+            "always", "music", "those", "both", "mark", "book", "letter", "until", "mile",
+            "river", "car", "feet", "care", "second", "enough", "plain", "girl", "usual",
+            "young", "ready", "above", "ever", "red", "list", "though", "feel", "talk",
+            "bird", "soon", "body", "dog", "family", "direct", "pose", "leave", "song",
+            "measure", "door", "product", "black", "short", "numeral", "class", "wind",
+            "question", "happen", "complete", "ship", "area", "half", "rock", "order", "fire",
+            "south", "problem", "piece", "told", "knew", "pass", "top", "whole", "king",
+            "space", "heard", "best", "hour", "better", "true", "during", "hundred", "five",
+            "remember", "step", "early", "hold", "west", "ground", "interest", "reach", "fast",
+            "verb", "sing", "listen", "six", "table", "travel", "less", "morning", "ten",
+            "simple", "several", "vowel", "toward", "power", "town", "fine", "drive", "sang",
+            "close", "dark", "grown", "draw", "yet", "left", "late", "real", "run", "case",
+            "stop", "raise", "base", "sense", "cat", "quick", "brown", "fox", "jumps", "lazy"
+        ).forEach { insert(it, 500f) }
     }
 }
 
@@ -267,10 +328,27 @@ class SpatialModel(
     private val config: GlideEngineConfig
 ) {
 
+    fun computeKeyUnitPx(): Float {
+        val avg = keyPositions.values
+            .mapNotNull { kp ->
+                val w = abs(kp.bounds.right - kp.bounds.left)
+                val h = abs(kp.bounds.bottom - kp.bounds.top)
+                val u = (w + h) * 0.5f
+                if (u > 1f) u else null
+            }
+            .takeIf { it.isNotEmpty() }
+            ?.average()
+            ?.toFloat()
+        return (avg ?: 80f).coerceAtLeast(40f)
+    }
+
     fun pointKeyDistanceScore(point: TouchPoint, keyChar: Char, velocityPxPerMs: Float = 0f): Float {
         val key = keyPositions[keyChar.lowercaseChar()] ?: return 0.00001f
-        val speedFactor = 1.0f + (velocityPxPerMs * config.velocityToleranceFactor).coerceIn(0f, 2.5f)
-        val sigma = config.spatialSigmaDp * speedFactor
+        val keyUnit = computeKeyUnitPx()
+        val normalizedVel = velocityPxPerMs / (keyUnit / 100f).coerceAtLeast(0.5f)
+        val speedFactor = 1.0f + (normalizedVel * config.velocityToleranceFactor * 0.5f).coerceIn(0f, 2.0f)
+        val baseSigma = max(config.spatialSigmaDp, keyUnit * 0.48f)
+        val sigma = baseSigma * speedFactor
         val distSq = (point.x - key.centerX).pow(2) + (point.y - key.centerY).pow(2)
         return exp(-distSq / (2f * sigma * sigma))
     }
@@ -282,7 +360,7 @@ class SpatialModel(
 
         val firstScore = pointKeyDistanceScore(trajectory.first(), word.first(), avgVelocity)
         val lastScore = pointKeyDistanceScore(trajectory.last(), word.last(), avgVelocity)
-        if (firstScore < 0.001f || lastScore < 0.001f) return 0.0001f
+        if (firstScore < 0.0005f || lastScore < 0.0005f) return 0.0001f
 
         val cost = Array(n + 1) { FloatArray(m + 1) { 1e6f } }
         cost[0][0] = 0f
@@ -301,11 +379,13 @@ class SpatialModel(
         return exp(-cost[n][m] / (n + m))
     }
 
-    fun findProximityKeys(point: TouchPoint, maxRadiusDp: Float = 48.0f): List<Char> {
+    fun findProximityKeys(point: TouchPoint, maxRadiusPx: Float = computeKeyUnitPx() * 1.2f): List<Char> {
         val list = mutableListOf<Pair<Char, Float>>()
         for ((char, key) in keyPositions) {
             val d = hypot(point.x - key.centerX, point.y - key.centerY)
-            if (d <= maxRadiusDp) list.add(char to d)
+            val insideBounds = point.x in key.bounds.left..key.bounds.right &&
+                point.y in key.bounds.top..key.bounds.bottom
+            if (insideBounds || d <= maxRadiusPx) list.add(char to d)
         }
         list.sortBy { it.second }
         return list.map { it.first }
@@ -317,72 +397,25 @@ class SpatialModel(
 // ----------------------------------------------------------------------------
 
 class GlideDecoder(
-    private val keyPositions: Map<Char, KeyPosition>,
+    private var keyPositions: Map<Char, KeyPosition>,
     private val lexicon: TrieLexicon,
     private val config: GlideEngineConfig = GlideEngineConfig()
 ) {
     private val processor = TrajectoryProcessor(config)
-    private val spatialModel = SpatialModel(keyPositions, config)
+    private var spatialModel = SpatialModel(keyPositions, config)
     private var lastTapTimestamp: Long = 0L
+
+    fun updateKeyPositions(newPositions: Map<Char, KeyPosition>) {
+        this.keyPositions = newPositions
+        this.spatialModel = SpatialModel(newPositions, config)
+    }
 
     fun notifyTap(time: Long = System.currentTimeMillis()) { lastTapTimestamp = time }
 
-    fun decodeGesture(rawPoints: List<TouchPoint>): List<GlideCandidate> {
-        try {
-            val pointsJson = org.json.JSONArray().apply {
-                for (p in rawPoints) {
-                    put(org.json.JSONObject().apply {
-                        put("x", p.x.toDouble())
-                        put("y", p.y.toDouble())
-                        put("timestamp", p.timestamp)
-                        put("pressure", 1.0)
-                    })
-                }
-            }.toString()
+    fun decodeGesture(rawPoints: List<TouchPoint>, lastTapTs: Long = lastTapTimestamp): List<GlideCandidate> {
+        if (keyPositions.isEmpty()) return emptyList()
 
-            val keysJson = org.json.JSONObject().apply {
-                for ((ch, key) in keyPositions) {
-                    put(ch.toString(), org.json.JSONObject().apply {
-                        put("character", ch.toString())
-                        put("bounds", org.json.JSONObject().apply {
-                            put("left", key.bounds.left.toDouble())
-                            put("top", key.bounds.top.toDouble())
-                            put("right", key.bounds.right.toDouble())
-                            put("bottom", key.bounds.bottom.toDouble())
-                        })
-                        put("center_x", key.centerX.toDouble())
-                        put("center_y", key.centerY.toDouble())
-                    })
-                }
-            }.toString()
-
-            val nativeRes = com.keyboard.engine.bridge.NativeBridge.glideDecodeGesture(
-                pointsJson = pointsJson,
-                keyPositionsJson = keysJson,
-                lexiconWords = emptyArray(),
-                lastTapTimestamp = lastTapTimestamp
-            )
-            val jsonArr = org.json.JSONArray(nativeRes)
-            if (jsonArr.length() > 0) {
-                val nativeCandidates = mutableListOf<GlideCandidate>()
-                for (i in 0 until jsonArr.length()) {
-                    val obj = jsonArr.getJSONObject(i)
-                    nativeCandidates.add(
-                        GlideCandidate(
-                            word = obj.getString("word"),
-                            totalScore = obj.getDouble("total_score").toFloat(),
-                            spatialScore = obj.getDouble("spatial_score").toFloat(),
-                            languageModelScore = obj.getDouble("language_model_score").toFloat()
-                        )
-                    )
-                }
-                return nativeCandidates
-            }
-        } catch (e: Throwable) {
-            // fallback to Kotlin implementation
-        }
-
-        val valid = processor.validateTrajectory(rawPoints, lastTapTimestamp, keyPositions)
+        val valid = processor.validateTrajectory(rawPoints, lastTapTs, keyPositions)
         if (!valid.isValidGesture) return emptyList()
 
         val smoothed = processor.smoothTrajectory(processor.resampleTrajectory(rawPoints))
@@ -395,6 +428,13 @@ class GlideDecoder(
         val endKeys = spatialModel.findProximityKeys(smoothed.last()).toSet()
         if (startKeys.isEmpty() || endKeys.isEmpty()) return emptyList()
 
+        val cornerIndices = processor.extractCorners(smoothed)
+        val step = max(1, smoothed.size / 20)
+        val sampleIndices = ((step until smoothed.size step step) + cornerIndices + (smoothed.size - 1))
+            .distinct()
+            .sorted()
+            .filter { it in 1 until smoothed.size }
+
         data class BeamNode(val node: TrieLexicon.Node, val word: String, val score: Float)
         var beam = mutableListOf<BeamNode>()
         for (sc in startKeys) {
@@ -402,11 +442,13 @@ class GlideDecoder(
             beam.add(BeamNode(child, sc.toString(), spatialModel.pointKeyDistanceScore(smoothed.first(), sc, avgVelocity)))
         }
 
-        val step = max(1, smoothed.size / 8)
-        var pIdx = step
-        while (pIdx < smoothed.size && beam.isNotEmpty()) {
+        val beamLimit = max(config.maxBeamWidth, 64)
+        val stepRadius = spatialModel.computeKeyUnitPx() * 1.3f
+
+        for (pIdx in sampleIndices) {
+            if (beam.isEmpty()) break
             val pt = smoothed[pIdx]
-            val nearKeys = spatialModel.findProximityKeys(pt)
+            val nearKeys = spatialModel.findProximityKeys(pt, stepRadius)
             val nextBeam = mutableListOf<BeamNode>()
             for (b in beam) {
                 for (k in nearKeys) {
@@ -421,19 +463,24 @@ class GlideDecoder(
                 nextBeam.add(BeamNode(b.node, b.word, b.score * 0.95f))
             }
             nextBeam.sortByDescending { it.score }
-            beam = nextBeam.distinctBy { it.word }.take(config.maxBeamWidth).toMutableList()
-            pIdx += step
+            beam = nextBeam.distinctBy { it.word }.take(beamLimit).toMutableList()
         }
 
         val candidates = mutableSetOf<String>()
         for (b in beam) {
             if (b.node.isWord && endKeys.contains(b.word.last())) candidates.add(b.word)
+            for (ec in endKeys) {
+                val endChild = b.node.children[ec]
+                if (endChild != null && endChild.isWord && endChild.word != null) {
+                    candidates.add(endChild.word!!)
+                }
+            }
         }
 
         val results = mutableListOf<GlideCandidate>()
         for (w in candidates) {
             val spatialScore = spatialModel.alignWordTrajectory(w, smoothed, avgVelocity)
-            if (spatialScore < 0.05f) continue
+            if (spatialScore < 0.005f) continue
             val lmScore = ln(lexicon.getFrequency(w) + 1f) / ln(1001f)
             val total = config.spatialWeight * spatialScore + config.lmWeight * lmScore
             results.add(GlideCandidate(w, total, spatialScore, lmScore))

@@ -1,5 +1,7 @@
 package com.keybord.engine.glide
 
+import android.content.Context
+
 /**
  * Prefix tree (Trie) for dictionary candidate lookups and beam pruning.
  */
@@ -26,10 +28,12 @@ class TrieLexicon {
         for (char in cleanWord) {
             current = current.children.getOrPut(char) { Node() }
         }
+        if (!current.isWord) {
+            wordCount++
+        }
         current.isWord = true
         current.frequency = maxOf(current.frequency, frequency)
         current.word = cleanWord
-        wordCount++
     }
 
     /**
@@ -52,6 +56,30 @@ class TrieLexicon {
             current = current.children[char] ?: return 0f
         }
         return if (current.isWord) current.frequency else 0f
+    }
+
+    /**
+     * Loads tab-separated word<TAB>frequency lexicon from assets/wordlist.txt,
+     * falling back to starter vocabulary if assets are unavailable.
+     */
+    fun loadFromAssets(context: Context) {
+        loadDefaultVocabulary()
+        try {
+            context.assets.open("wordlist.txt")
+                .bufferedReader()
+                .useLines { lines ->
+                    lines.forEach { line ->
+                        val parts = line.trim().split('\t')
+                        val word = parts.getOrNull(0) ?: return@forEach
+                        val freq = parts.getOrNull(1)?.toFloatOrNull() ?: 500f
+                        if (word.isNotEmpty()) {
+                            insert(word, freq)
+                        }
+                    }
+                }
+        } catch (_: Exception) {
+            // Starter vocabulary already loaded above
+        }
     }
 
     /**
@@ -79,14 +107,40 @@ class TrieLexicon {
             "our" to 5f, "work" to 4f, "first" to 4f, "well" to 4f, "way" to 3f,
             "even" to 3f, "new" to 3f, "want" to 3f, "because" to 3f, "any" to 2f,
             "these" to 2f, "give" to 2f, "day" to 2f, "most" to 2f, "us" to 2f,
-            "hello" to 25f, "keyboard" to 15f, "glide" to 12f, "typing" to 14f,
-            "android" to 20f, "google" to 25f, "world" to 18f, "quick" to 10f,
-            "brown" to 8f, "fox" to 7f, "jumps" to 6f, "lazy" to 5f, "dog" to 5f,
-            "keybord" to 30f, "custom" to 20f, "theme" to 18f, "clipboard" to 22f,
-            "fast" to 15f, "swipe" to 14f, "great" to 25f, "love" to 30f, "thanks" to 28f
+            "hello" to 250f, "keyboard" to 150f, "glide" to 120f, "typing" to 140f,
+            "android" to 200f, "google" to 250f, "world" to 180f, "quick" to 100f,
+            "brown" to 80f, "fox" to 70f, "jumps" to 60f, "lazy" to 50f, "dog" to 50f,
+            "keybord" to 300f, "custom" to 200f, "theme" to 180f, "clipboard" to 220f,
+            "fast" to 150f, "swipe" to 140f, "great" to 250f, "love" to 300f, "thanks" to 280f
         )
         for ((word, freq) in defaultWords) {
             insert(word, freq)
         }
+        listOf(
+            "was", "are", "had", "were", "said", "each", "many", "write", "long", "thing",
+            "more", "did", "number", "sound", "water", "call", "may", "down", "side", "been",
+            "find", "part", "place", "made", "where", "little", "round", "man", "came", "show",
+            "every", "under", "name", "very", "through", "form", "much", "help", "low", "line",
+            "before", "turn", "cause", "same", "mean", "differ", "move", "right", "boy", "old",
+            "too", "does", "tell", "sentence", "set", "three", "air", "play", "small", "end",
+            "put", "home", "read", "hand", "port", "large", "spell", "add", "land", "here",
+            "must", "big", "high", "such", "follow", "act", "why", "ask", "men", "change",
+            "went", "light", "kind", "off", "need", "house", "picture", "try", "again", "animal",
+            "point", "mother", "near", "build", "self", "earth", "father", "head", "stand", "own",
+            "page", "open", "seem", "together", "next", "white", "children", "begin", "got",
+            "walk", "example", "ease", "paper", "often", "always", "music", "those", "both",
+            "mark", "book", "letter", "until", "mile", "river", "car", "feet", "care", "second",
+            "enough", "plain", "girl", "usual", "young", "ready", "above", "ever", "red", "list",
+            "though", "feel", "talk", "bird", "soon", "body", "family", "direct", "pose", "leave",
+            "song", "measure", "door", "product", "black", "short", "numeral", "class", "wind",
+            "question", "happen", "complete", "ship", "area", "half", "rock", "order", "fire",
+            "south", "problem", "piece", "told", "knew", "pass", "top", "whole", "king", "space",
+            "heard", "best", "hour", "better", "true", "during", "hundred", "five", "remember",
+            "step", "early", "hold", "west", "ground", "interest", "reach", "verb", "sing",
+            "listen", "six", "table", "travel", "less", "morning", "ten", "simple", "several",
+            "vowel", "toward", "power", "town", "fine", "drive", "sang", "close", "dark",
+            "grown", "draw", "yet", "left", "late", "real", "run", "case", "stop", "raise",
+            "base", "sense"
+        ).forEach { w -> insert(w, 200f) }
     }
 }

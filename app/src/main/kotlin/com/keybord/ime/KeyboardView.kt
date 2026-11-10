@@ -216,10 +216,22 @@ class KeyboardView @JvmOverloads constructor(
             currentY += keyHeight + gapV
         }
 
-        onKeyPositionsChanged?.invoke(keyPositions)
+        onKeyPositionsChanged?.invoke(HashMap(keyPositions))
     }
 
-    fun getKeyPositions(): Map<Char, KeyPosition> = keyPositions
+    fun getKeyPositions(): Map<Char, KeyPosition> = HashMap(keyPositions)
+
+    fun isAlphabeticKeyAt(x: Float, y: Float): Boolean {
+        val key = findKeyAt(x, y) ?: return false
+        return key.code.length == 1 && key.code[0].isLetter()
+    }
+
+    fun cancelActiveTouch() {
+        popPreviewView?.dismiss()
+        pressedKey = null
+        isSwipeGesture = false
+        invalidate()
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
@@ -344,8 +356,9 @@ class KeyboardView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                val touchSlopPx = 16f * resources.displayMetrics.density
                 val dist = Math.hypot((x - touchDownX).toDouble(), (y - touchDownY).toDouble()).toFloat()
-                if (dist > 18f) {
+                if (dist > touchSlopPx) {
                     isSwipeGesture = true
                     popPreviewView?.dismiss()
                 }
@@ -364,11 +377,13 @@ class KeyboardView @JvmOverloads constructor(
 
             MotionEvent.ACTION_UP -> {
                 popPreviewView?.dismiss()
-                val targetKey = pressedKey
+                val targetKey = pressedKey ?: findKeyAt(x, y) ?: findKeyAt(touchDownX, touchDownY)
+                val wasSwipe = isSwipeGesture
                 pressedKey = null
+                isSwipeGesture = false
                 invalidate()
 
-                if (!isSwipeGesture && targetKey != null) {
+                if (!wasSwipe && targetKey != null) {
                     val keyText = getDisplayText(targetKey)
                     onKeyTap?.invoke(keyText)
                 }
@@ -378,6 +393,7 @@ class KeyboardView @JvmOverloads constructor(
             MotionEvent.ACTION_CANCEL -> {
                 popPreviewView?.dismiss()
                 pressedKey = null
+                isSwipeGesture = false
                 invalidate()
                 return true
             }

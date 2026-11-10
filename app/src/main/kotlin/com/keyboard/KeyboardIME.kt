@@ -10,6 +10,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import com.keyboard.engine.glide.GestureOverlayView
+import com.keyboard.engine.glide.GlideCandidate
 import com.keyboard.engine.magicwrite.*
 import com.keyboard.engine.rambler.*
 import com.keyboard.engine.vocab.*
@@ -44,6 +45,7 @@ class KeyboardIME : InputMethodService() {
     private val staticDictionary = setOf("the", "be", "to", "of", "and", "a", "in", "that", "have", "i", "it", "for", "not", "hello", "keyboard")
     private var currentPrefix = StringBuilder()
     private var lastAutoCorrectWord: String? = null
+    private var lastGlideWord: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -147,6 +149,9 @@ class KeyboardIME : InputMethodService() {
             onWordCommittedListener = { word ->
                 commitWord(word)
             }
+            onGlideCandidatesListener = { candidates ->
+                onGlideCandidates(candidates)
+            }
         }
 
         gestureOverlay = GestureOverlayView(this).apply {
@@ -194,11 +199,36 @@ class KeyboardIME : InputMethodService() {
         }
 
         currentPrefix.clear()
+        lastGlideWord = null
         updateNextWordPredictions()
+    }
+
+    private fun onGlideCandidates(candidates: List<GlideCandidate>) {
+        val ic = currentInputConnection ?: return
+        val word = candidates.first().word
+        ic.beginBatchEdit()
+        ic.commitText("$word ", 1)
+        ic.endBatchEdit()
+
+        vocabEngine.onWordCommitted(word, recentWords)
+        recentWords.add(word)
+        if (recentWords.size > 8) {
+            recentWords.removeAt(0)
+        }
+        currentPrefix.clear()
+        lastGlideWord = word
+
+        val alternatives = if (candidates.size > 1) {
+            candidates.drop(1).map { it.word }
+        } else {
+            listOf(word)
+        }
+        suggestionStrip.setCandidates(alternatives)
     }
 
     private fun handleKeyTap(ch: Char) {
         val ic = currentInputConnection ?: return
+        lastGlideWord = null
         if (ch == '⌫') {
             handleBackspace()
             return
@@ -261,6 +291,23 @@ class KeyboardIME : InputMethodService() {
     // Step 2.3c: When user taps a suggestion strip item
     private fun handleCandidateSelected(selectedWord: String) {
         val ic = currentInputConnection ?: return
+        val prevGlide = lastGlideWord
+        if (prevGlide != null && currentPrefix.isEmpty()) {
+            ic.beginBatchEdit()
+            ic.deleteSurroundingText(prevGlide.length + 1, 0)
+            ic.commitText("$selectedWord ", 1)
+            ic.endBatchEdit()
+            lastGlideWord = null
+            vocabEngine.onManualCorrection(prevGlide, selectedWord, recentWords)
+            if (recentWords.isNotEmpty() && recentWords.last() == prevGlide) {
+                recentWords[recentWords.lastIndex] = selectedWord
+            } else {
+                recentWords.add(selectedWord)
+            }
+            updateNextWordPredictions()
+            return
+        }
+
         if (currentPrefix.isNotEmpty()) {
             ic.deleteSurroundingText(currentPrefix.length, 0)
             currentPrefix.clear()

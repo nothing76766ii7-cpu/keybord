@@ -218,6 +218,7 @@ impl TrieLexicon {
             ("even", 3.0), ("new", 3.0), ("want", 3.0), ("because", 3.0), ("any", 2.0),
             ("these", 2.0), ("give", 2.0), ("day", 2.0), ("most", 2.0), ("us", 2.0),
             ("hello", 25.0), ("keyboard", 15.0), ("glide", 12.0), ("typing", 14.0),
+            ("fast", 15.0), ("swipe", 14.0), ("world", 20.0), ("keybord", 30.0),
             ("cat", 20.0), ("dog", 20.0), ("jump", 15.0), ("quick", 15.0), ("brown", 15.0),
             ("fox", 15.0), ("lazy", 15.0),
         ];
@@ -241,6 +242,25 @@ impl<'a> SpatialModel<'a> {
         }
     }
 
+    pub fn key_unit_px(&self) -> f32 {
+        let mut sum = 0.0f32;
+        let mut count = 0usize;
+        for kp in self.key_positions.values() {
+            let w = (kp.bounds.right - kp.bounds.left).abs();
+            let h = (kp.bounds.bottom - kp.bounds.top).abs();
+            let u = (w + h) * 0.5;
+            if u > 1.0 {
+                sum += u;
+                count += 1;
+            }
+        }
+        if count > 0 {
+            (sum / count as f32).max(40.0)
+        } else {
+            80.0
+        }
+    }
+
     pub fn point_key_distance_score(
         &self,
         point: &TouchPoint,
@@ -252,8 +272,11 @@ impl<'a> SpatialModel<'a> {
             None => return 0.00001,
         };
 
-        let speed_factor = (1.0 + velocity_px_per_ms * self.config.velocity_tolerance_factor).clamp(1.0, 3.5);
-        let sigma = self.config.spatial_sigma_dp * speed_factor;
+        let key_unit = self.key_unit_px();
+        let norm_vel = velocity_px_per_ms / (key_unit / 100.0).max(0.5);
+        let speed_factor = (1.0 + norm_vel * self.config.velocity_tolerance_factor * 0.5).clamp(1.0, 3.0);
+        let base_sigma = self.config.spatial_sigma_dp.max(key_unit * 0.48);
+        let sigma = base_sigma * speed_factor;
         let two_sigma_sq = 2.0 * sigma * sigma;
 
         let dx = point.x - key.center_x;
@@ -279,7 +302,7 @@ impl<'a> SpatialModel<'a> {
         let first_score = self.point_key_distance_score(&trajectory[0], word[0], average_velocity);
         let last_score = self.point_key_distance_score(&trajectory[m - 1], word[n - 1], average_velocity);
 
-        if first_score < 0.001 || last_score < 0.001 {
+        if first_score < 0.0005 || last_score < 0.0005 {
             return 0.0001;
         }
 
@@ -309,13 +332,13 @@ impl<'a> SpatialModel<'a> {
         (-normalized_cost).exp()
     }
 
-    pub fn find_proximity_keys(&self, point: &TouchPoint, max_radius_dp: f32) -> Vec<char> {
+    pub fn find_proximity_keys(&self, point: &TouchPoint, max_radius_px: f32) -> Vec<char> {
         let mut candidates = Vec::new();
         for (&ch, key) in self.key_positions {
             let dx = point.x - key.center_x;
             let dy = point.y - key.center_y;
             let d = (dx * dx + dy * dy).sqrt();
-            if d <= max_radius_dp {
+            if key.bounds.contains(point.x, point.y) || d <= max_radius_px {
                 candidates.push((ch, d));
             }
         }
@@ -347,7 +370,7 @@ impl<'a> TrajectoryProcessor<'a> {
         let end_time = points.last().unwrap().timestamp;
         let duration = end_time - start_time;
 
-        if start_time - last_tap_timestamp < self.config.min_tap_interval_ms {
+        if last_tap_timestamp > 0 && start_time >= last_tap_timestamp && start_time - last_tap_timestamp < self.config.min_tap_interval_ms {
             return false;
         }
 
@@ -518,8 +541,9 @@ impl GlideDecoder {
         }
         let avg_velocity = total_dist / duration_ms as f32;
 
-        let start_keys = spatial.find_proximity_keys(&smoothed[0], 75.0);
-        let end_keys: HashSet<char> = spatial.find_proximity_keys(smoothed.last().unwrap(), 75.0).into_iter().collect();
+        let key_unit = spatial.key_unit_px();
+        let start_keys = spatial.find_proximity_keys(&smoothed[0], key_unit * 1.2);
+        let end_keys: HashSet<char> = spatial.find_proximity_keys(smoothed.last().unwrap(), key_unit * 1.2).into_iter().collect();
 
         if start_keys.is_empty() || end_keys.is_empty() {
             return Vec::new();
@@ -547,10 +571,11 @@ impl GlideDecoder {
         let mut collected_words = HashSet::new();
         let step_size = 2.min(smoothed.len().saturating_sub(1).max(1));
         let mut current_point_idx = step_size;
+        let step_radius = key_unit * 1.3;
 
         while current_point_idx < smoothed.len() && !beam.is_empty() {
             let current_point = &smoothed[current_point_idx];
-            let candidates_near_point = spatial.find_proximity_keys(current_point, 80.0);
+            let candidates_near_point = spatial.find_proximity_keys(current_point, step_radius);
             let mut next_beam = Vec::new();
 
             for b_node in &beam {
@@ -602,7 +627,7 @@ impl GlideDecoder {
         }
 
         for b_node in &beam {
-            Self::collect_completed_words(b_node.trie_node, &end_keys, &mut collected_words, 3);
+            Self::collect_completed_words(b_node.trie_node, &end_keys, &mut collected_words, 2);
             if b_node.trie_node.is_word {
                 if let Some(ref w) = b_node.trie_node.word {
                     if let Some(last_c) = w.chars().last() {
@@ -617,7 +642,7 @@ impl GlideDecoder {
         let mut results = Vec::new();
         for word in collected_words {
             let spatial_score = spatial.align_word_trajectory(&word, &smoothed, avg_velocity);
-            if spatial_score < 0.05 {
+            if spatial_score < 0.005 {
                 continue;
             }
 
@@ -782,5 +807,72 @@ mod tests {
         ];
         let candidates = decoder.decode_gesture(&points);
         assert!(candidates.is_empty(), "Movement within one key must be throttled");
+    }
+
+    // 6. test_high_dpi_swipe_hello_and_world() — realistic 3x density off-center swipes
+    #[test]
+    fn test_high_dpi_swipe_hello_and_world() {
+        let mut map = HashMap::new();
+        let row1 = "qwertyuiop";
+        let row2 = "asdfghjkl";
+        let row3 = "zxcvbnm";
+        let key_w = 108.0f32;
+        let key_h = 162.0f32;
+
+        for (i, c) in row1.chars().enumerate() {
+            let left = i as f32 * key_w;
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 18.0, left + key_w - 12.0, 18.0 + key_h)));
+        }
+        for (i, c) in row2.chars().enumerate() {
+            let left = i as f32 * (key_w * 1.11);
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 198.0, left + key_w, 198.0 + key_h)));
+        }
+        for (i, c) in row3.chars().enumerate() {
+            let left = (i as f32 + 1.4) * key_w;
+            map.insert(c, KeyPosition::new(c, Rect::new(left, 378.0, left + key_w - 12.0, 378.0 + key_h)));
+        }
+
+        let mut lex = TrieLexicon::new();
+        lex.load_default_vocabulary();
+        let decoder = GlideDecoder::new(map.clone(), lex, None);
+
+        let build_swipe = |keys: &[char]| -> Vec<TouchPoint> {
+            let mut pts = Vec::new();
+            let mut t = 5000i64;
+            for pair in keys.windows(2) {
+                let a = &map[&pair[0]];
+                let b = &map[&pair[1]];
+                for step in 0..8 {
+                    let frac = step as f32 / 8.0;
+                    // Simulate realistic +18px vertical thumb offset and moderate 0.9 px/ms speed
+                    pts.push(TouchPoint::new(
+                        a.center_x + frac * (b.center_x - a.center_x),
+                        a.center_y + 18.0 + frac * (b.center_y - a.center_y),
+                        t,
+                        1.0,
+                    ));
+                    t += 35;
+                }
+            }
+            let last = &map[keys.last().unwrap()];
+            pts.push(TouchPoint::new(last.center_x + 25.0, last.center_y + 40.0, t, 1.0));
+            pts
+        };
+
+        let hello_candidates = decoder.decode_gesture(&build_swipe(&['h', 'e', 'l', 'o']));
+        assert!(!hello_candidates.is_empty(), "3x DPI hello swipe must return candidates");
+        assert!(
+            hello_candidates.iter().any(|c| c.word == "hello"),
+            "Expected 'hello' in candidates, got {:?}",
+            hello_candidates.iter().map(|c| &c.word).collect::<Vec<_>>()
+        );
+
+        let world_candidates = decoder.decode_gesture(&build_swipe(&['w', 'o', 'r', 'l', 'd']));
+        assert!(!world_candidates.is_empty(), "3x DPI world swipe must return candidates");
+        assert!(
+            world_candidates.iter().any(|c| c.word == "world"),
+            "Expected 'world' in candidates, got {:?}",
+            world_candidates.iter().map(|c| &c.word).collect::<Vec<_>>()
+        );
     }
 }
