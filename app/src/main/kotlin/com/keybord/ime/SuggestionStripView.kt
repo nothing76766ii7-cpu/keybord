@@ -294,7 +294,7 @@ class SuggestionStripView @JvmOverloads constructor(
         val dp = resources.displayMetrics.density
         setBackgroundColor(theme.suggestionStripBgColor)
         val textColor = theme.suggestionStripTextColor
-        val accent = theme.effectAccentColor
+        val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
         clipboardBtn.setTextColor(textColor)
         magicBtn.setTextColor(if (isMagicBarVisible) accent else textColor)
         micBtn.setTextColor(if (isMicListening) Color.parseColor("#FF5252") else textColor)

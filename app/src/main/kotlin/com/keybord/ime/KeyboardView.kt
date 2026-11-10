@@ -483,12 +483,15 @@ class KeyboardView @JvmOverloads constructor(
                         theme,
                         width.toFloat()
                     )
-                    if (key.code == "⌫") {
-                        deleteKeyDown = key
-                        deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
-                    } else if (key.code == " ") {
-                        spaceKeyDown = key
-                        spaceLastStepIndex = 0
+                    when (key.code) {
+                        "⌫" -> {
+                            deleteKeyDown = key
+                            deleteHandler.postDelayed(deleteRepeatRunnable, DELETE_REPEAT_INITIAL_DELAY_MS)
+                        }
+                        " " -> {
+                            spaceKeyDown = key
+                            spaceLastStepIndex = 0
+                        }
                     }
                 }
                 invalidate()
