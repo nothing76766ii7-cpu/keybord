@@ -147,6 +147,10 @@ class KeyboardView @JvmOverloads constructor(
     private var cachedKeyBotColor = 0
     private var cachedKeyShaderHeight = -1f
     private var cachedFaceGradient: LinearGradient? = null
+    private var cachedBgSpec: BackgroundSpec? = null
+    private var cachedBgW = -1f
+    private var cachedBgH = -1f
+    private var cachedBgShader: Shader? = null
 
     private var touchDownTime = 0L
     private var touchDownX = 0f
@@ -434,11 +438,17 @@ class KeyboardView @JvmOverloads constructor(
                 canvas.drawRect(0f, 0f, wF, hF, bgPaint)
             }
             BackgroundSpec.Type.GRADIENT -> {
-                bgPaint.shader = KeyboardEffectEngine.buildBackgroundShader(
-                    theme.keyboardBackground,
-                    wF,
-                    hF
-                )
+                if (cachedBgShader == null || cachedBgSpec != theme.keyboardBackground || cachedBgW != wF || cachedBgH != hF) {
+                    cachedBgSpec = theme.keyboardBackground
+                    cachedBgW = wF
+                    cachedBgH = hF
+                    cachedBgShader = KeyboardEffectEngine.buildBackgroundShader(
+                        theme.keyboardBackground,
+                        wF,
+                        hF
+                    )
+                }
+                bgPaint.shader = cachedBgShader
                 canvas.drawRect(0f, 0f, wF, hF, bgPaint)
             }
             BackgroundSpec.Type.IMAGE -> {

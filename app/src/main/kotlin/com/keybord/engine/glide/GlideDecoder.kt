@@ -35,13 +35,24 @@ class GlideDecoder(
             return emptyList()
         }
 
-        val validation = processor.validateTrajectory(rawPoints, lastTapTs, keyPositions)
+        val finitePoints = rawPoints.filter { it.x.isFinite() && it.y.isFinite() }
+        if (finitePoints.size < 2) {
+            return emptyList()
+        }
+
+        val validation = processor.validateTrajectory(finitePoints, lastTapTs, keyPositions)
         if (!validation.isValidGesture) {
             return emptyList()
         }
 
-        val resampled = processor.resampleTrajectory(rawPoints, config.resamplePointCount)
+        val resampled = processor.resampleTrajectory(finitePoints, config.resamplePointCount)
+        if (resampled.size < 2) {
+            return emptyList()
+        }
         val smoothed = processor.smoothTrajectory(resampled)
+        if (smoothed.size < 2) {
+            return emptyList()
+        }
 
         val durationMs = max(1L, smoothed.last().timestamp - smoothed.first().timestamp)
         val arcLength = processor.computeArcLength(smoothed)
@@ -72,7 +83,7 @@ class GlideDecoder(
             spatialModel.keyUnitPx
         )
 
-        val maxFreqLn = ln(lexicon.maxFrequency + 1.0f).coerceAtLeast(1.0f)
+        val maxFreqLn = ln(lexicon.currentMaxFrequency().coerceAtLeast(1.0f) + 1.0f).coerceAtLeast(1.0f)
         val rGauss = max(40f, anchorRadius * 0.68f)
 
         val seenCandidates = HashSet<String>()
@@ -85,7 +96,8 @@ class GlideDecoder(
             val startG = exp(-((sdx * sdx + sdy * sdy) / (2.0f * rGauss * rGauss)))
 
             for (ec in endKeys) {
-                val bucket = lexicon.endpointBuckets[sc to ec] ?: continue
+                val bucket = lexicon.getEndpointBucketSnapshot(sc, ec)
+                if (bucket.isEmpty()) continue
                 val endK = keyPositions[ec] ?: continue
                 val edx = endPt.x - endK.centerX
                 val edy = endPt.y - endK.centerY
@@ -105,14 +117,15 @@ class GlideDecoder(
                         uTanY = uTanY,
                         averageVelocity = avgVelocity
                     )
-                    if (spatialScore < 0.01f) continue
+                    if (!spatialScore.isFinite() || spatialScore < 0.01f) continue
 
                     val arcRatio = (min(arcLength, tArc) / max(1f, max(arcLength, tArc)))
                         .coerceIn(0.45f, 1.0f)
                     val arcFactor = 0.88f + 0.12f * arcRatio
 
-                    val lmScore = (ln(entry.frequency + 1.0f) / maxFreqLn).coerceIn(0f, 1f)
+                    val lmScore = (ln(entry.frequency.coerceAtLeast(0f) + 1.0f) / maxFreqLn).coerceIn(0f, 1f)
                     val totalScore = (spatialScore * anchorFactor * arcFactor) * (0.78f + 0.22f * lmScore)
+                    if (!totalScore.isFinite()) continue
 
                     results.add(
                         GlideCandidate(

@@ -68,6 +68,7 @@ class KeybordIME : InputMethodService() {
 
     // Background executors (offload lexicon/SQLite predictions off main thread to prevent ANRs)
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    @Volatile private var isServiceDestroyed = false
     private val lexiconExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "KeybordLexiconLoader").apply { isDaemon = true }
     }
@@ -208,7 +209,7 @@ class KeybordIME : InputMethodService() {
                 if (chunk != null) {
                     vocabEngine.onWordCommittedAsync(
                         chunk.cleanedText.split(Regex("\\s+")).lastOrNull().orEmpty(),
-                        recentContextWords,
+                        recentContextWords.toList(),
                         LearningEvent.NORMAL_TYPING
                     )
                     if (::suggestionStripView.isInitialized) {
@@ -249,8 +250,9 @@ class KeybordIME : InputMethodService() {
         clipboardManager = KeybordClipboardManager(this).apply {
             startListening()
             addChangeListener {
+                if (isServiceDestroyed) return@addChangeListener
                 mainHandler.post {
-                    if (::suggestionStripView.isInitialized) {
+                    if (!isServiceDestroyed && ::suggestionStripView.isInitialized) {
                         updateRecentClipsInStrip()
                     }
                 }
@@ -260,7 +262,9 @@ class KeybordIME : InputMethodService() {
         // 5. Initialize Theme & Profile Repositories
         themeRepo = ThemeRepository(this).apply {
             addOnThemeChangeListener { newTheme ->
-                applyTheme(newTheme)
+                if (!isServiceDestroyed) {
+                    applyTheme(newTheme)
+                }
             }
         }
         baseTheme = themeRepo.getActiveTheme()
@@ -313,49 +317,72 @@ class KeybordIME : InputMethodService() {
         refreshPredictions()
     }
 
+    private fun executeSafely(
+        executor: java.util.concurrent.ExecutorService,
+        taskName: String,
+        block: () -> Unit
+    ) {
+        if (isServiceDestroyed || executor.isShutdown || executor.isTerminated) return
+        try {
+            executor.execute {
+                if (isServiceDestroyed) return@execute
+                try {
+                    block()
+                } catch (e: Exception) {
+                    KeybordCrashLogger.recordNonFatal("KeybordIME", "$taskName failed", e)
+                }
+            }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Service shutting down cleanly
+        }
+    }
+
     private fun reloadLexiconAsync(includeHinglish: Boolean) {
         val generation = ++lexiconLoadGeneration
-        lexiconExecutor.execute {
-            try {
-                val freshLexicon = TrieLexicon().apply {
-                    loadFromAssets(this@KeybordIME, includeHinglish = includeHinglish)
+        executeSafely(lexiconExecutor, "Async lexicon reload") {
+            val freshLexicon = TrieLexicon().apply {
+                loadFromAssets(this@KeybordIME, includeHinglish = includeHinglish)
+            }
+            if (isServiceDestroyed) return@executeSafely
+            syncUserVocabularyInto(freshLexicon)
+            mainHandler.post {
+                if (isServiceDestroyed || lexiconLoadGeneration != generation) return@post
+                val positions = if (::keyboardView.isInitialized) keyboardView.getKeyPositions() else emptyMap()
+                lexicon = freshLexicon
+                if (::vocabEngine.isInitialized) {
+                    vocabEngine.staticLexicon = freshLexicon
                 }
-                syncUserVocabularyInto(freshLexicon)
-                mainHandler.post {
-                    if (lexiconLoadGeneration != generation) return@post
-                    val positions = if (::keyboardView.isInitialized) keyboardView.getKeyPositions() else emptyMap()
-                    lexicon = freshLexicon
-                    if (::vocabEngine.isInitialized) {
-                        vocabEngine.staticLexicon = freshLexicon
-                    }
-                    glideDecoder = GlideDecoder(positions, freshLexicon)
-                    if (::suggestionStripView.isInitialized) {
-                        refreshPredictions()
-                    }
+                glideDecoder = GlideDecoder(positions, freshLexicon)
+                if (::suggestionStripView.isInitialized) {
+                    refreshPredictions()
                 }
-            } catch (e: Exception) {
-                KeybordCrashLogger.recordNonFatal("KeybordIME", "Async lexicon reload failed", e)
             }
         }
     }
 
     private fun syncUserVocabularyAsync(targetLexicon: TrieLexicon) {
-        lexiconExecutor.execute {
+        executeSafely(lexiconExecutor, "Vocabulary sync") {
             syncUserVocabularyInto(targetLexicon)
         }
     }
 
     private fun syncUserVocabularyInto(targetLexicon: TrieLexicon) {
+        if (isServiceDestroyed) return
         try {
             vocabEngine.personalDictionary.syncFromSystem(contentResolver)
             for (entry in vocabEngine.personalDictionary.getAllPersonalWords()) {
+                if (isServiceDestroyed) return
                 targetLexicon.insert(entry.word, maxOf(entry.count.toFloat(), 900f))
             }
+            if (isServiceDestroyed) return
             for (entry in vocabEngine.storage.getKnownWords(350)) {
+                if (isServiceDestroyed) return
                 targetLexicon.insert(entry.word, maxOf(650f, entry.count * 25f))
             }
         } catch (e: Exception) {
-            KeybordCrashLogger.recordNonFatal("KeybordIME", "Vocabulary sync error", e)
+            if (!isServiceDestroyed) {
+                KeybordCrashLogger.recordNonFatal("KeybordIME", "Vocabulary sync error", e)
+            }
         }
     }
 
@@ -390,6 +417,7 @@ class KeybordIME : InputMethodService() {
     }
 
     override fun onDestroy() {
+        isServiceDestroyed = true
         super.onDestroy()
         try {
             getSharedPreferences(KeyboardLayoutPrefs.PREFS_NAME, MODE_PRIVATE)
@@ -407,6 +435,14 @@ class KeybordIME : InputMethodService() {
         }
         try {
             mainHandler.removeCallbacksAndMessages(null)
+            lexiconExecutor.shutdown()
+            predictionExecutor.shutdown()
+            try {
+                lexiconExecutor.awaitTermination(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+                predictionExecutor.awaitTermination(150, java.util.concurrent.TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                // Continue teardown
+            }
             lexiconExecutor.shutdownNow()
             predictionExecutor.shutdownNow()
             if (::aiWriterPanelView.isInitialized) {
@@ -738,74 +774,86 @@ class KeybordIME : InputMethodService() {
         return rootContainer
     }
 
-    override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+    override fun onStartInputView(info: EditorInfo?, restarting: Boolean) {
         super.onStartInputView(info, restarting)
-        currentEditorInfo = info
-        loadTypingPreferences()
-        syncUserVocabularyAsync(lexicon)
+        try {
+            currentEditorInfo = info
+            loadTypingPreferences()
+            syncUserVocabularyAsync(lexicon)
 
-        (rootContainer.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
-            if (lp.gravity != Gravity.BOTTOM) {
-                lp.gravity = Gravity.BOTTOM
-                lp.width = ViewGroup.LayoutParams.MATCH_PARENT
-                lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
-                rootContainer.layoutParams = lp
+            (rootContainer.layoutParams as? FrameLayout.LayoutParams)?.let { lp ->
+                if (lp.gravity != Gravity.BOTTOM) {
+                    lp.gravity = Gravity.BOTTOM
+                    lp.width = ViewGroup.LayoutParams.MATCH_PARENT
+                    lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                    rootContainer.layoutParams = lp
+                }
             }
-        }
-        configureImeWindow()
-        showKeyboardMain()
-        keyboardView.cancelActiveTouch()
-        swipeUseSelectionHighlight = false
-        swipeWordBoundaries = IntArray(0)
-        swipeDeletedChunks.clear()
-        lastSwipeWordCount = 0
-        currentWordPrefix.clear()
-        recentContextWords.clear()
-        lastGlideCommittedWord = null
-        autoInsertedSpaceBeforePunctuation = false
-        lastAutoCorrectedOriginal = null
-        lastAutoCorrectedReplacement = null
-        suppressedAutoCorrectWord = null
-        isSwipeSession = false
-        touchPoints.clear()
+            configureImeWindow()
+            showKeyboardMain()
+            keyboardView.cancelActiveTouch()
+            swipeUseSelectionHighlight = false
+            swipeWordBoundaries = IntArray(0)
+            swipeDeletedChunks.clear()
+            lastSwipeWordCount = 0
+            currentWordPrefix.clear()
+            recentContextWords.clear()
+            lastGlideCommittedWord = null
+            autoInsertedSpaceBeforePunctuation = false
+            lastAutoCorrectedOriginal = null
+            lastAutoCorrectedReplacement = null
+            suppressedAutoCorrectWord = null
+            isSwipeSession = false
+            touchPoints.clear()
 
-        ramblerController.attachInputConnection(currentInputConnection)
-        if (::suggestionStripView.isInitialized) {
-            suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
-            if (!voiceRamblerManager.isListening && !ramblerController.hasActiveToggleChunk()) {
-                suggestionStripView.hideRamblerBar()
+            ramblerController.attachInputConnection(currentInputConnection)
+            if (::suggestionStripView.isInitialized) {
+                suggestionStripView.setMagicUndoVisible(magicCoordinator.hasUndo)
+                if (!voiceRamblerManager.isListening && !ramblerController.hasActiveToggleChunk()) {
+                    suggestionStripView.hideRamblerBar()
+                }
             }
-        }
 
-        // 1. Check Per-App Profiles
-        val profile = profileRepo.getProfileForPackage(info.packageName)
-        val targetTheme = if (profile?.themeIdOverride != null) {
-            themeRepo.getThemeById(profile.themeIdOverride) ?: themeRepo.getActiveTheme()
-        } else {
-            themeRepo.getActiveTheme()
-        }
-        applyTheme(targetTheme)
+            // 1. Check Per-App Profiles (info or info.packageName can be null in some webviews/overlays)
+            val pkgName = info?.packageName?.takeIf { it.isNotBlank() }
+            val profile = profileRepo.getProfileForPackage(pkgName)
+            val targetTheme = if (profile?.themeIdOverride != null) {
+                themeRepo.getThemeById(profile.themeIdOverride) ?: themeRepo.getActiveTheme()
+            } else {
+                themeRepo.getActiveTheme()
+            }
+            applyTheme(targetTheme)
 
-        // 2. Sensitive content detection (password fields)
-        clipboardManager.updateCurrentEditorInfo(info)
+            // 2. Sensitive content detection (password fields)
+            if (info != null) {
+                clipboardManager.updateCurrentEditorInfo(info)
+            }
 
-        // 3. Check cursor context & auto-capitalisation
-        val textBefore = try {
-            currentInputConnection?.getTextBeforeCursor(40, 0)?.toString() ?: ""
-        } catch (_: Exception) {
-            ""
-        }
-        val tokens = textBefore.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
-        if (tokens.isNotEmpty()) {
-            recentContextWords.addAll(tokens.takeLast(3))
-        }
-        currentInputConnection?.let { syncWordPrefixFromCursor(it) }
-        updateAutoCapShiftState()
+            // 3. Check cursor context & auto-capitalisation
+            val textBefore = try {
+                currentInputConnection?.getTextBeforeCursor(40, 0)?.toString() ?: ""
+            } catch (_: Exception) {
+                ""
+            }
+            val tokens = textBefore.trim().split(Regex("\\s+")).filter { it.isNotBlank() }
+            if (tokens.isNotEmpty()) {
+                recentContextWords.addAll(tokens.takeLast(3))
+            }
+            currentInputConnection?.let { syncWordPrefixFromCursor(it) }
+            updateAutoCapShiftState()
 
-        refreshPredictions()
-        updateRecentClipsInStrip()
-        if (::base32PanelView.isInitialized && base32PanelView.visibility == View.VISIBLE) {
-            base32PanelView.onPanelOpened()
+            refreshPredictions()
+            updateRecentClipsInStrip()
+            if (::base32PanelView.isInitialized && base32PanelView.visibility == View.VISIBLE) {
+                base32PanelView.onPanelOpened()
+            }
+        } catch (e: Exception) {
+            KeybordCrashLogger.recordNonFatal(
+                "KeybordIME",
+                "onStartInputView failed",
+                e,
+                mapOf("hasInfo" to (info != null).toString(), "restarting" to restarting.toString())
+            )
         }
     }
 
@@ -843,23 +891,27 @@ class KeybordIME : InputMethodService() {
         candidatesEnd: Int
     ) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
-        ramblerController.undoStateMachine.handleTextMutation(newSelEnd)
-        if (::suggestionStripView.isInitialized &&
-            !voiceRamblerManager.isListening &&
-            !ramblerController.hasActiveToggleChunk() &&
-            ramblerController.undoStateMachine.sessionState == RamblerSessionState.IDLE
-        ) {
-            suggestionStripView.hideRamblerBar()
-        }
-        if (isInternalInputEdit) return
-        val ic = currentInputConnection ?: return
-        if (newSelStart >= 0 && newSelStart == newSelEnd && (newSelStart != oldSelStart || newSelEnd != oldSelEnd)) {
-            lastAutoCorrectedOriginal = null
-            lastAutoCorrectedReplacement = null
-            lastGlideCommittedWord = null
-            syncWordPrefixFromCursor(ic)
-            updateAutoCapShiftState()
-            refreshPredictions()
+        try {
+            ramblerController.undoStateMachine.handleTextMutation(newSelEnd)
+            if (::suggestionStripView.isInitialized &&
+                !voiceRamblerManager.isListening &&
+                !ramblerController.hasActiveToggleChunk() &&
+                ramblerController.undoStateMachine.sessionState == RamblerSessionState.IDLE
+            ) {
+                suggestionStripView.hideRamblerBar()
+            }
+            if (isInternalInputEdit) return
+            val ic = currentInputConnection ?: return
+            if (newSelStart >= 0 && newSelStart == newSelEnd && (newSelStart != oldSelStart || newSelEnd != oldSelEnd)) {
+                lastAutoCorrectedOriginal = null
+                lastAutoCorrectedReplacement = null
+                lastGlideCommittedWord = null
+                syncWordPrefixFromCursor(ic)
+                updateAutoCapShiftState()
+                refreshPredictions()
+            }
+        } catch (e: Exception) {
+            KeybordCrashLogger.recordNonFatal("KeybordIME", "onUpdateSelection failed", e)
         }
     }
 
@@ -892,91 +944,100 @@ class KeybordIME : InputMethodService() {
             aiWriterPanelView.isPromptCaptureActive
 
     private fun handleKeyboardTouch(event: MotionEvent): Boolean {
-        if (!isGlideTypingEnabled || keyboardView.layer != KeyboardView.KeyboardLayer.ALPHA) {
-            return keyboardView.handleTouchEvent(event)
-        }
-
-        val x = event.x
-        val y = event.y
-        val now = System.currentTimeMillis()
-
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                touchPoints.clear()
-                isSwipeSession = keyboardView.isInAlphabeticGlideZone(x, y)
-                if (isSwipeSession) {
-                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
-                    gestureOverlayView.addPoint(x, y)
-                }
-                keyboardView.handleTouchEvent(event)
-                return true
-            }
-
-            MotionEvent.ACTION_POINTER_DOWN -> {
-                // Multi-touch 2-thumb rapid typing immediately yields from glide tracking to rollover tap
-                touchPoints.clear()
-                isSwipeSession = false
-                gestureOverlayView.clearTrail()
+        return try {
+            if (!isGlideTypingEnabled || keyboardView.layer != KeyboardView.KeyboardLayer.ALPHA) {
                 return keyboardView.handleTouchEvent(event)
             }
 
-            MotionEvent.ACTION_MOVE -> {
-                if (isSwipeSession) {
-                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
-                    gestureOverlayView.addPoint(x, y)
+            val x = event.x
+            val y = event.y
+            val now = System.currentTimeMillis()
+
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    touchPoints.clear()
+                    isSwipeSession = keyboardView.isInAlphabeticGlideZone(x, y)
+                    if (isSwipeSession) {
+                        touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                        gestureOverlayView.addPoint(x, y)
+                    }
+                    keyboardView.handleTouchEvent(event)
+                    return true
                 }
-                keyboardView.handleTouchEvent(event)
-                return true
-            }
 
-            MotionEvent.ACTION_POINTER_UP -> {
-                return keyboardView.handleTouchEvent(event)
-            }
-
-            MotionEvent.ACTION_UP -> {
-                gestureOverlayView.clearTrail()
-
-                if (isSwipeSession) {
-                    touchPoints.add(TouchPoint(x, y, now, event.pressure))
-                    val pointsSnapshot = touchPoints.toList()
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    // Multi-touch 2-thumb rapid typing immediately yields from glide tracking to rollover tap
                     touchPoints.clear()
                     isSwipeSession = false
-
-                    val currentPositions = keyboardView.getKeyPositions()
-                    if (currentPositions.isNotEmpty()) {
-                        glideDecoder.updateKeyPositions(currentPositions)
-                    }
-
-                    val rawCandidates = if (pointsSnapshot.size >= 2) {
-                        glideDecoder.decodeGesture(pointsSnapshot)
-                    } else {
-                        emptyList()
-                    }
-                    val candidates = rerankWithContext(rawCandidates, resolveRecentContextWords())
-
-                    if (candidates.isNotEmpty()) {
-                        keyboardView.cancelActiveTouch()
-                        onGlideCandidates(candidates)
-                        glideDecoder.notifyTap(now)
-                        return true
-                    }
-                } else {
-                    touchPoints.clear()
+                    gestureOverlayView.clearTrail()
+                    return keyboardView.handleTouchEvent(event)
                 }
 
-                // Fallback to discrete tap
-                glideDecoder.notifyTap(now)
-                return keyboardView.handleTouchEvent(event)
-            }
+                MotionEvent.ACTION_MOVE -> {
+                    if (isSwipeSession) {
+                        touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                        gestureOverlayView.addPoint(x, y)
+                    }
+                    keyboardView.handleTouchEvent(event)
+                    return true
+                }
 
-            MotionEvent.ACTION_CANCEL -> {
-                touchPoints.clear()
-                isSwipeSession = false
-                gestureOverlayView.clearTrail()
-                return keyboardView.handleTouchEvent(event)
+                MotionEvent.ACTION_POINTER_UP -> {
+                    return keyboardView.handleTouchEvent(event)
+                }
+
+                MotionEvent.ACTION_UP -> {
+                    gestureOverlayView.clearTrail()
+
+                    if (isSwipeSession) {
+                        touchPoints.add(TouchPoint(x, y, now, event.pressure))
+                        val pointsSnapshot = touchPoints.toList()
+                        touchPoints.clear()
+                        isSwipeSession = false
+
+                        val currentPositions = keyboardView.getKeyPositions()
+                        if (currentPositions.isNotEmpty()) {
+                            glideDecoder.updateKeyPositions(currentPositions)
+                        }
+
+                        val rawCandidates = if (pointsSnapshot.size >= 2) {
+                            glideDecoder.decodeGesture(pointsSnapshot)
+                        } else {
+                            emptyList()
+                        }
+                        val candidates = rerankWithContext(rawCandidates, resolveRecentContextWords())
+
+                        if (candidates.isNotEmpty()) {
+                            keyboardView.cancelActiveTouch()
+                            onGlideCandidates(candidates)
+                            glideDecoder.notifyTap(now)
+                            return true
+                        }
+                    } else {
+                        touchPoints.clear()
+                    }
+
+                    // Fallback to discrete tap
+                    glideDecoder.notifyTap(now)
+                    return keyboardView.handleTouchEvent(event)
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    touchPoints.clear()
+                    isSwipeSession = false
+                    gestureOverlayView.clearTrail()
+                    return keyboardView.handleTouchEvent(event)
+                }
             }
+            false
+        } catch (e: Exception) {
+            touchPoints.clear()
+            isSwipeSession = false
+            if (::gestureOverlayView.isInitialized) gestureOverlayView.clearTrail()
+            if (::keyboardView.isInitialized) keyboardView.cancelActiveTouch()
+            KeybordCrashLogger.recordNonFatal("KeybordIME", "handleKeyboardTouch failed", e)
+            false
         }
-        return false
     }
 
     private fun resolveRecentContextWords(): List<String> {
@@ -991,23 +1052,28 @@ class KeybordIME : InputMethodService() {
                 return tokens.takeLast(3)
             }
         }
-        return recentContextWords
+        return recentContextWords.toList()
     }
 
     fun rerankWithContext(
         candidates: List<GlideCandidate>,
         recentWords: List<String>
     ): List<GlideCandidate> {
-        if (candidates.size <= 1) return candidates
+        if (candidates.size <= 1 || isServiceDestroyed) return candidates
         val rawPrev = recentWords.lastOrNull()?.trim()?.lowercase() ?: return candidates
         val prevWord = rawPrev.trimEnd('.', ',', '!', '?', ';', ':', '"', '\'')
         if (prevWord.isEmpty()) return candidates
 
-        return candidates.map { candidate ->
-            val bigramScore = vocabEngine.storage.getBigramScore(prevWord, candidate.word)
-            val contextBoost = 1.0f + (bigramScore * 0.4f)
-            candidate.copy(totalScore = candidate.totalScore * contextBoost)
-        }.sortedByDescending { it.totalScore }
+        return try {
+            candidates.map { candidate ->
+                val bigramScore = vocabEngine.storage.getBigramScore(prevWord, candidate.word)
+                val contextBoost = 1.0f + (bigramScore * 0.4f)
+                candidate.copy(totalScore = candidate.totalScore * contextBoost)
+            }.sortedByDescending { it.totalScore }
+        } catch (e: Exception) {
+            KeybordCrashLogger.recordNonFatal("KeybordIME", "rerankWithContext failed", e)
+            candidates
+        }
     }
 
     private fun onGlideCandidates(candidates: List<GlideCandidate>) {
@@ -1084,6 +1150,14 @@ class KeybordIME : InputMethodService() {
     }
 
     private fun handleKeyTap(key: String) {
+        try {
+            handleKeyTapInternal(key)
+        } catch (e: Exception) {
+            KeybordCrashLogger.recordNonFatal("KeybordIME", "handleKeyTap failed", e)
+        }
+    }
+
+    private fun handleKeyTapInternal(key: String) {
         if (isAiPromptCaptureActive()) {
             when (key) {
                 "⌫" -> aiWriterPanelView.handlePromptBackspace()
@@ -1239,6 +1313,8 @@ class KeybordIME : InputMethodService() {
                 try {
                     ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ENTER))
                     ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ENTER))
+                } catch (e: Exception) {
+                    KeybordCrashLogger.recordNonFatal("KeybordIME", "Enter sendKeyEvent failed", e)
                 } finally {
                     isInternalInputEdit = false
                 }
@@ -1380,9 +1456,13 @@ class KeybordIME : InputMethodService() {
         if (deltaSteps == 0) return
         val keyCode = if (deltaSteps < 0) KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT
         val count = kotlin.math.abs(deltaSteps).coerceAtMost(12)
-        for (i in 0 until count) {
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
-            ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+        try {
+            for (i in 0 until count) {
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+                ic.sendKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+            }
+        } catch (e: Exception) {
+            KeybordCrashLogger.recordNonFatal("KeybordIME", "moveCursorBySteps failed", e)
         }
     }
 
@@ -1498,7 +1578,7 @@ class KeybordIME : InputMethodService() {
                     ic.commitText(pendingOrig, 1)
                 }
                 val correctedWord = pendingRepl.trimEnd('.', ',', '!', '?', ';', ':', ' ')
-                vocabEngine.onManualCorrectionAsync(correctedWord, pendingOrig, recentContextWords)
+                vocabEngine.onManualCorrectionAsync(correctedWord, pendingOrig, recentContextWords.toList())
                 lexicon.insert(pendingOrig.lowercase(), 800f)
                 suppressedAutoCorrectWord = pendingOrig.lowercase()
                 syncWordPrefixFromCursor(ic)
@@ -1676,7 +1756,7 @@ class KeybordIME : InputMethodService() {
     private fun learnAndSyncWord(word: String, event: LearningEvent) {
         val clean = word.trim()
         if (clean.isEmpty()) return
-        vocabEngine.onWordCommittedAsync(clean, recentContextWords, event)
+        vocabEngine.onWordCommittedAsync(clean, recentContextWords.toList(), event)
         val lower = clean.lowercase()
         if (!lexicon.contains(lower) && (
                 event == LearningEvent.SUGGESTION_ACCEPTED ||
@@ -1720,7 +1800,7 @@ class KeybordIME : InputMethodService() {
                 lastAutoCorrectedReplacement = null
                 val correctedWord = pendingRepl.trimEnd('.', ',', '!', '?', ';', ':', ' ')
                 if (selectedWord == pendingOrig) {
-                    vocabEngine.onManualCorrectionAsync(correctedWord, selectedWord, recentContextWords)
+                    vocabEngine.onManualCorrectionAsync(correctedWord, selectedWord, recentContextWords.toList())
                     suppressedAutoCorrectWord = selectedWord.lowercase()
                     lexicon.insert(selectedWord.lowercase(), 850f)
                 } else {
@@ -1747,7 +1827,7 @@ class KeybordIME : InputMethodService() {
             }
             lastGlideCommittedWord = selectedWord
             autoInsertedSpaceBeforePunctuation = true
-            vocabEngine.onManualCorrectionAsync(prevGlide, selectedWord, recentContextWords)
+            vocabEngine.onManualCorrectionAsync(prevGlide, selectedWord, recentContextWords.toList())
             lexicon.insert(selectedWord.lowercase(), 850f)
             if (recentContextWords.isNotEmpty() && recentContextWords.last() == prevGlide) {
                 recentContextWords[recentContextWords.lastIndex] = selectedWord
@@ -1784,44 +1864,36 @@ class KeybordIME : InputMethodService() {
     }
 
     private fun refreshPredictions() {
-        if (!::suggestionStripView.isInitialized) return
+        if (isServiceDestroyed || !::suggestionStripView.isInitialized) return
         val prefix = currentWordPrefix.toString()
         val contextSnapshot = recentContextWords.toList()
         val generation = ++predictionGeneration
-        predictionExecutor.execute {
-            try {
-                val words = if (prefix.isNotEmpty()) {
-                    vocabEngine.rankPrefixCompletions(prefix, contextSnapshot, maxCandidates = 3)
-                } else {
-                    vocabEngine.predictNextWords(contextSnapshot, maxCandidates = 3)
-                }.map { it.word }
-                mainHandler.post {
-                    if (predictionGeneration == generation && ::suggestionStripView.isInitialized) {
-                        suggestionStripView.setCandidates(words)
-                    }
+        executeSafely(predictionExecutor, "Prediction generation") {
+            val words = if (prefix.isNotEmpty()) {
+                vocabEngine.rankPrefixCompletions(prefix, contextSnapshot, maxCandidates = 3)
+            } else {
+                vocabEngine.predictNextWords(contextSnapshot, maxCandidates = 3)
+            }.map { it.word }
+            mainHandler.post {
+                if (!isServiceDestroyed && predictionGeneration == generation && ::suggestionStripView.isInitialized) {
+                    suggestionStripView.setCandidates(words)
                 }
-            } catch (e: Exception) {
-                KeybordCrashLogger.recordNonFatal("KeybordIME", "Prediction generation failed", e)
             }
         }
     }
 
     private fun refreshPredictionsWithFallbackPrefix(rawPrefix: String) {
-        if (!::suggestionStripView.isInitialized) return
+        if (isServiceDestroyed || !::suggestionStripView.isInitialized) return
         val contextSnapshot = recentContextWords.toList()
         val generation = ++predictionGeneration
-        predictionExecutor.execute {
-            try {
-                val nextPreds = vocabEngine.predictNextWords(contextSnapshot, maxCandidates = 2)
-                    .map { it.word }
-                val combined = (listOf(rawPrefix) + nextPreds).distinct().take(3)
-                mainHandler.post {
-                    if (predictionGeneration == generation && ::suggestionStripView.isInitialized) {
-                        suggestionStripView.setCandidates(combined)
-                    }
+        executeSafely(predictionExecutor, "Post-autocorrect prediction") {
+            val nextPreds = vocabEngine.predictNextWords(contextSnapshot, maxCandidates = 2)
+                .map { it.word }
+            val combined = (listOf(rawPrefix) + nextPreds).distinct().take(3)
+            mainHandler.post {
+                if (!isServiceDestroyed && predictionGeneration == generation && ::suggestionStripView.isInitialized) {
+                    suggestionStripView.setCandidates(combined)
                 }
-            } catch (e: Exception) {
-                KeybordCrashLogger.recordNonFatal("KeybordIME", "Post-autocorrect prediction failed", e)
             }
         }
     }

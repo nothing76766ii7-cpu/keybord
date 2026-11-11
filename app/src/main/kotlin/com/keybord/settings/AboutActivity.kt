@@ -16,7 +16,7 @@ import com.keybord.diagnostics.KeybordCrashLogger
 import com.keybord.ui.UiKit
 
 /**
- * About & Diagnostics screen presenting Keybord v1.2.0 architecture,
+ * About & Diagnostics screen presenting Keybord v1.2.1 architecture,
  * honest local-first privacy guarantees, and crash log viewer.
  */
 class AboutActivity : AppCompatActivity() {
@@ -88,7 +88,7 @@ class AboutActivity : AppCompatActivity() {
         brandCard.addView(
             UiKit.createBadgePill(
                 this,
-                "Version 1.2.0 • Skeuomorphic Edition",
+                "Version 1.2.1 • Skeuomorphic Edition",
                 UiKit.SURFACE_INPUT,
                 UiKit.ACCENT_PRIMARY,
                 UiKit.ACCENT_PRIMARY
@@ -118,7 +118,7 @@ class AboutActivity : AppCompatActivity() {
         )
         content.addView(
             buildFeatureCard(
-                "⚡ What's Inside v1.2.0",
+                "⚡ What's Inside v1.2.1",
                 "• Tactile Skeuomorphic Design System + 6 physical Material themes\n" +
                     "• Hardened multiline InputMethodService engine with async SQLite & prediction pipelines\n" +
                     "• Fixed Spacebar commit behavior & independent English / EN+HI switcher\n" +

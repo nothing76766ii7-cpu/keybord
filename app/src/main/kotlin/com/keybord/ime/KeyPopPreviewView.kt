@@ -43,7 +43,7 @@ class KeyPopPreviewView @JvmOverloads constructor(
     fun show(key: String, bounds: RectF) {
         if (!theme.keyPopPreviewEnabled) return
         activeKeyText = key
-        targetKeyBounds = bounds
+        targetKeyBounds = RectF(bounds)
         visibility = View.VISIBLE
         invalidate()
     }
@@ -69,21 +69,22 @@ class KeyPopPreviewView @JvmOverloads constructor(
         super.onDraw(canvas)
         val text = activeKeyText ?: return
         val bounds = targetKeyBounds ?: return
+        if (width <= 0 || height <= 0 || bounds.width() <= 0f || bounds.height() <= 0f) return
 
         val density = resources.displayMetrics.density
         val scale = theme.keyPopPreviewSize.scaleFactor
         val textScale = if (text.length > 2) 0.72f else 1.2f
 
         textPaint.color = theme.keyLabelColorPrimary
-        textPaint.textSize = theme.keyLabelSizeSp * density * scale * textScale
+        textPaint.textSize = (theme.keyLabelSizeSp * density * scale * textScale).coerceAtLeast(1f)
         textPaint.typeface = theme.keyLabelFont.toTypeface()
 
         val minLabelWidth = if (text.length > 2) textPaint.measureText(text) + 18f * density else 0f
-        val popWidth = kotlin.math.max(bounds.width() * scale, minLabelWidth)
-        val popHeight = bounds.height() * scale
+        val popWidth = kotlin.math.max(bounds.width() * scale, minLabelWidth).coerceAtLeast(1f)
+        val popHeight = (bounds.height() * scale).coerceAtLeast(1f)
         val margin = 4f * density
         val maxLeft = (width.toFloat() - popWidth - margin).coerceAtLeast(margin)
-        val popLeft = (bounds.centerX() - popWidth / 2f).coerceIn(margin, maxLeft)
+        val popLeft = (bounds.centerX() - popWidth / 2f).coerceIn(minOf(margin, maxLeft), maxOf(margin, maxLeft))
         val popTop = (bounds.top - popHeight - (8f * density)).coerceAtLeast(margin)
         val popRect = RectF(popLeft, popTop, popLeft + popWidth, popTop + popHeight)
 
@@ -95,7 +96,9 @@ class KeyPopPreviewView @JvmOverloads constructor(
         borderPaint.color = theme.keyBorderColor
         borderPaint.strokeWidth = 1.5f * density
 
-        val radius = (theme.keyCornerRadiusDp * density * scale).coerceAtLeast(10f * density)
+        val desiredRadius = (theme.keyCornerRadiusDp * density * scale).coerceAtLeast(10f * density)
+        val maxVisualRadius = (minOf(popRect.width(), popRect.height()) * 0.45f).coerceAtLeast(2f * density)
+        val radius = desiredRadius.coerceAtMost(maxVisualRadius)
         // Soft drop shadow
         haloPaint.style = Paint.Style.FILL
         haloPaint.color = Color.argb(85, 0, 0, 0)
@@ -117,12 +120,13 @@ class KeyPopPreviewView @JvmOverloads constructor(
             canvas.drawRoundRect(popRect, radius, radius, haloPaint)
         }
 
-        // Draw bubble + bottom pointer caret pointing to keycap
-        val caretX = bounds.centerX().coerceIn(popRect.left + radius, popRect.right - radius)
+        // Draw bubble + bottom pointer caret pointing to keycap (safe against large corner radiuses)
+        val caretHalfWidth = 6f * density
+        val caretX = clampCaretX(bounds.centerX(), popRect.left, popRect.right, radius, caretHalfWidth)
         val caretPath = Path().apply {
-            moveTo(caretX - 6f * density, popRect.bottom - 1f * density)
-            lineTo(caretX, popRect.bottom + 6f * density)
-            lineTo(caretX + 6f * density, popRect.bottom - 1f * density)
+            moveTo(caretX - caretHalfWidth, popRect.bottom - 1f * density)
+            lineTo(caretX, popRect.bottom + caretHalfWidth)
+            lineTo(caretX + caretHalfWidth, popRect.bottom - 1f * density)
             close()
         }
         canvas.drawRoundRect(popRect, radius, radius, bgPaint)
@@ -131,5 +135,27 @@ class KeyPopPreviewView @JvmOverloads constructor(
 
         val textY = popRect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
         canvas.drawText(text, popRect.centerX(), textY, textPaint)
+    }
+
+    companion object {
+        internal fun clampCaretX(
+            centerX: Float,
+            popLeft: Float,
+            popRight: Float,
+            radius: Float,
+            caretHalfWidth: Float
+        ): Float {
+            if (!centerX.isFinite() || !popLeft.isFinite() || !popRight.isFinite()) {
+                return if (popLeft.isFinite()) popLeft else 0f
+            }
+            val safeRadius = if (radius.isFinite()) radius.coerceAtLeast(0f) else 0f
+            val safeHalfW = if (caretHalfWidth.isFinite()) caretHalfWidth.coerceAtLeast(0f) else 0f
+            val width = (popRight - popLeft).coerceAtLeast(0f)
+            val maxInset = ((width - safeHalfW * 2f) * 0.5f).coerceAtLeast(0f)
+            val inset = minOf(safeRadius, maxInset)
+            val lo = minOf(popLeft + inset, popRight - inset)
+            val hi = maxOf(popLeft + inset, popRight - inset)
+            return centerX.coerceIn(lo, hi)
+        }
     }
 }

@@ -37,7 +37,7 @@ class TypingSettingsActivity : AppCompatActivity() {
         }
         UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
 
-        val verChip = UiKit.createBadgePill(this, "v1.2.0", UiKit.SURFACE_CARD, UiKit.TEXT_SECONDARY, UiKit.BORDER_SUBTLE)
+        val verChip = UiKit.createBadgePill(this, "v1.2.1", UiKit.SURFACE_CARD, UiKit.TEXT_SECONDARY, UiKit.BORDER_SUBTLE)
         root.addView(
             UiKit.createHeaderBar(
                 this,

@@ -101,7 +101,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val verTag = TextView(this).apply {
-            text = "Skeuomorphic v1.2.0"
+            text = "Skeuomorphic v1.2.1"
             textSize = 11.5f
             typeface = Typeface.MONOSPACE
             setTextColor(UiKit.TEXT_SECONDARY)
@@ -187,7 +187,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
         )
         menuCard.addView(UiKit.createHairlineDivider(this))
         menuCard.addView(
-            buildMenuRow("ℹ", "#1E2230", "About & Diagnostics", "Version 1.2.0 • Privacy guarantee & crash log viewer") {
+            buildMenuRow("ℹ", "#1E2230", "About & Diagnostics", "Version 1.2.1 • Privacy guarantee & crash log viewer") {
                 startActivity(Intent(this, AboutActivity::class.java))
             }
         )

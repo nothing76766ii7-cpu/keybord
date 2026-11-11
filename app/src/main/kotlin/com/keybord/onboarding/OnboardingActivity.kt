@@ -73,7 +73,7 @@ class OnboardingActivity : AppCompatActivity() {
         }
         val versionPill = UiKit.createBadgePill(
             this,
-            "v1.2.0",
+            "v1.2.1",
             UiKit.SURFACE_INPUT,
             UiKit.ACCENT_PRIMARY,
             UiKit.ACCENT_PRIMARY

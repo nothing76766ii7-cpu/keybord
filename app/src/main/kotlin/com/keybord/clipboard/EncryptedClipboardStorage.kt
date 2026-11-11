@@ -286,15 +286,23 @@ class EncryptedClipboardStorage(
         return all.filter { it.text.lowercase().contains(cleanQuery) }
     }
 
-    fun setPinned(id: Long, isPinned: Boolean) {
-        val cv = ContentValues().apply {
-            put("is_pinned", if (isPinned) 1 else 0)
+    fun setPinned(id: Long, isPinned: Boolean) = synchronized(dbLock) {
+        try {
+            val cv = ContentValues().apply {
+                put("is_pinned", if (isPinned) 1 else 0)
+            }
+            writableDatabase.update("clipboard_items", cv, "id = ?", arrayOf(id.toString()))
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "setPinned failed", e)
         }
-        writableDatabase.update("clipboard_items", cv, "id = ?", arrayOf(id.toString()))
     }
 
-    fun deleteItem(id: Long) {
-        writableDatabase.delete("clipboard_items", "id = ?", arrayOf(id.toString()))
+    fun deleteItem(id: Long) = synchronized(dbLock) {
+        try {
+            writableDatabase.delete("clipboard_items", "id = ?", arrayOf(id.toString()))
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "deleteItem failed", e)
+        }
     }
 
     /**
@@ -302,15 +310,21 @@ class EncryptedClipboardStorage(
      */
     fun deleteItems(ids: List<Long>) {
         if (ids.isEmpty()) return
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            for (id in ids) {
-                db.delete("clipboard_items", "id = ?", arrayOf(id.toString()))
+        synchronized(dbLock) {
+            try {
+                val db = writableDatabase
+                db.beginTransaction()
+                try {
+                    for (id in ids) {
+                        db.delete("clipboard_items", "id = ?", arrayOf(id.toString()))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "deleteItems failed", e)
             }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
         }
     }
 
@@ -319,26 +333,36 @@ class EncryptedClipboardStorage(
      */
     fun assignCategory(ids: List<Long>, category: String) {
         if (ids.isEmpty()) return
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            val cv = ContentValues().apply {
-                put("category", category)
+        synchronized(dbLock) {
+            try {
+                val db = writableDatabase
+                db.beginTransaction()
+                try {
+                    val cv = ContentValues().apply {
+                        put("category", category)
+                    }
+                    for (id in ids) {
+                        db.update("clipboard_items", cv, "id = ?", arrayOf(id.toString()))
+                    }
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "assignCategory failed", e)
             }
-            for (id in ids) {
-                db.update("clipboard_items", cv, "id = ?", arrayOf(id.toString()))
-            }
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
         }
     }
 
-    fun clearAll(includePinned: Boolean = false) {
-        if (includePinned) {
-            writableDatabase.delete("clipboard_items", null, null)
-        } else {
-            writableDatabase.delete("clipboard_items", "is_pinned = 0", null)
+    fun clearAll(includePinned: Boolean = false) = synchronized(dbLock) {
+        try {
+            if (includePinned) {
+                writableDatabase.delete("clipboard_items", null, null)
+            } else {
+                writableDatabase.delete("clipboard_items", "is_pinned = 0", null)
+            }
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "clearAll failed", e)
         }
     }
 
@@ -346,111 +370,130 @@ class EncryptedClipboardStorage(
      * Applies user-specified retention policies.
      * CRITICAL RULE: Pinned items are strictly exempt from all retention rules.
      */
-    fun applyRetentionPolicy(policy: RetentionPolicy, capacityLimit: Int) {
-        val db = writableDatabase
-        val now = System.currentTimeMillis()
-
-        db.beginTransaction()
+    fun applyRetentionPolicy(policy: RetentionPolicy, capacityLimit: Int) = synchronized(dbLock) {
         try {
-            // 1. Time-based retention policy
-            when (policy) {
-                is RetentionPolicy.KeepForever -> {
-                    // No age-based pruning
-                }
-                is RetentionPolicy.DeleteAfterDays -> {
-                    val cutoff = now - (policy.days.toLong() * 24L * 3600L * 1000L)
-                    db.delete("clipboard_items", "is_pinned = 0 AND created_at < ?", arrayOf(cutoff.toString()))
-                }
-                is RetentionPolicy.KeepLastCount -> {
-                    // Keep up to N unpinned items
-                    val cursor = db.rawQuery(
-                        "SELECT id FROM clipboard_items WHERE is_pinned = 0 ORDER BY created_at DESC LIMIT -1 OFFSET ?",
-                        arrayOf(policy.maxItems.toString())
-                    )
-                    val idsToDelete = mutableListOf<Long>()
-                    while (cursor.moveToNext()) {
-                        idsToDelete.add(cursor.getLong(0))
+            val db = writableDatabase
+            val now = System.currentTimeMillis()
+
+            db.beginTransaction()
+            try {
+                // 1. Time-based retention policy
+                when (policy) {
+                    is RetentionPolicy.KeepForever -> {
+                        // No age-based pruning
                     }
-                    cursor.close()
-                    for (delId in idsToDelete) {
-                        db.delete("clipboard_items", "id = ?", arrayOf(delId.toString()))
+                    is RetentionPolicy.DeleteAfterDays -> {
+                        val cutoff = now - (policy.days.toLong() * 24L * 3600L * 1000L)
+                        db.delete("clipboard_items", "is_pinned = 0 AND created_at < ?", arrayOf(cutoff.toString()))
+                    }
+                    is RetentionPolicy.KeepLastCount -> {
+                        val idsToDelete = mutableListOf<Long>()
+                        db.rawQuery(
+                            "SELECT id FROM clipboard_items WHERE is_pinned = 0 ORDER BY created_at DESC LIMIT -1 OFFSET ?",
+                            arrayOf(policy.maxItems.toString())
+                        ).use { cursor ->
+                            while (cursor.moveToNext()) {
+                                idsToDelete.add(cursor.getLong(0))
+                            }
+                        }
+                        for (delId in idsToDelete) {
+                            db.delete("clipboard_items", "id = ?", arrayOf(delId.toString()))
+                        }
                     }
                 }
+
+                // 2. Capacity limit enforcement (if capacityLimit > 0)
+                if (capacityLimit > 0) {
+                    var unpinnedCount = 0
+                    db.rawQuery("SELECT COUNT(*) FROM clipboard_items WHERE is_pinned = 0", null).use { cursor ->
+                        if (cursor.moveToFirst()) {
+                            unpinnedCount = cursor.getInt(0)
+                        }
+                    }
+
+                    if (unpinnedCount > capacityLimit) {
+                        val excess = unpinnedCount - capacityLimit
+                        val excessIds = mutableListOf<Long>()
+                        db.rawQuery(
+                            "SELECT id FROM clipboard_items WHERE is_pinned = 0 ORDER BY created_at ASC LIMIT ?",
+                            arrayOf(excess.toString())
+                        ).use { pruneCursor ->
+                            while (pruneCursor.moveToNext()) {
+                                excessIds.add(pruneCursor.getLong(0))
+                            }
+                        }
+                        for (delId in excessIds) {
+                            db.delete("clipboard_items", "id = ?", arrayOf(delId.toString()))
+                        }
+                    }
+                }
+
+                db.setTransactionSuccessful()
+            } finally {
+                db.endTransaction()
             }
-
-            // 2. Capacity limit enforcement (if capacityLimit > 0)
-            if (capacityLimit > 0) {
-                val cursor = db.rawQuery("SELECT COUNT(*) FROM clipboard_items WHERE is_pinned = 0", null)
-                var unpinnedCount = 0
-                if (cursor.moveToFirst()) {
-                    unpinnedCount = cursor.getInt(0)
-                }
-                cursor.close()
-
-                if (unpinnedCount > capacityLimit) {
-                    val excess = unpinnedCount - capacityLimit
-                    val pruneCursor = db.rawQuery(
-                        "SELECT id FROM clipboard_items WHERE is_pinned = 0 ORDER BY created_at ASC LIMIT ?",
-                        arrayOf(excess.toString())
-                    )
-                    val excessIds = mutableListOf<Long>()
-                    while (pruneCursor.moveToNext()) {
-                        excessIds.add(pruneCursor.getLong(0))
-                    }
-                    pruneCursor.close()
-                    for (delId in excessIds) {
-                        db.delete("clipboard_items", "id = ?", arrayOf(delId.toString()))
-                    }
-                }
-            }
-
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "applyRetentionPolicy failed", e)
         }
     }
 
     // ==================== Category Operations ====================
 
-    fun getCategories(): List<ClipboardCategory> {
-        val cursor = readableDatabase.rawQuery("SELECT name, color_hex, order_index FROM categories ORDER BY order_index ASC", null)
+    fun getCategories(): List<ClipboardCategory> = synchronized(dbLock) {
         val list = mutableListOf<ClipboardCategory>()
-        while (cursor.moveToNext()) {
-            list.add(
-                ClipboardCategory(
-                    name = cursor.getString(0),
-                    colorHex = cursor.getString(1),
-                    orderIndex = cursor.getInt(2)
-                )
-            )
+        try {
+            readableDatabase.rawQuery(
+                "SELECT name, color_hex, order_index FROM categories ORDER BY order_index ASC",
+                null
+            ).use { cursor ->
+                while (cursor.moveToNext()) {
+                    list.add(
+                        ClipboardCategory(
+                            name = cursor.getString(0) ?: ClipboardItem.DEFAULT_CATEGORY,
+                            colorHex = cursor.getString(1) ?: "#6366F1",
+                            orderIndex = cursor.getInt(2)
+                        )
+                    )
+                }
+            }
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "getCategories failed", e)
         }
-        cursor.close()
-        return list
+        list
     }
 
-    fun addCategory(category: ClipboardCategory) {
-        val cv = ContentValues().apply {
-            put("name", category.name)
-            put("color_hex", category.colorHex)
-            put("order_index", category.orderIndex)
+    fun addCategory(category: ClipboardCategory) = synchronized(dbLock) {
+        try {
+            val cv = ContentValues().apply {
+                put("name", category.name)
+                put("color_hex", category.colorHex)
+                put("order_index", category.orderIndex)
+            }
+            writableDatabase.insertWithOnConflict("categories", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
+        } catch (e: Exception) {
+            com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "addCategory failed", e)
         }
-        writableDatabase.insertWithOnConflict("categories", null, cv, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
     fun deleteCategory(name: String) {
         if (name == ClipboardItem.DEFAULT_CATEGORY) return // Protect default category
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            // Reset items in this category back to General
-            val cv = ContentValues().apply {
-                put("category", ClipboardItem.DEFAULT_CATEGORY)
+        synchronized(dbLock) {
+            try {
+                val db = writableDatabase
+                db.beginTransaction()
+                try {
+                    val cv = ContentValues().apply {
+                        put("category", ClipboardItem.DEFAULT_CATEGORY)
+                    }
+                    db.update("clipboard_items", cv, "category = ?", arrayOf(name))
+                    db.delete("categories", "name = ?", arrayOf(name))
+                    db.setTransactionSuccessful()
+                } finally {
+                    db.endTransaction()
+                }
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("ClipboardStorage", "deleteCategory failed", e)
             }
-            db.update("clipboard_items", cv, "category = ?", arrayOf(name))
-            db.delete("categories", "name = ?", arrayOf(name))
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
         }
     }
 }

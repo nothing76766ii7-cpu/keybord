@@ -31,6 +31,18 @@ class TrieLexicon {
         private set
 
     /**
+     * Returns a thread-safe snapshot of glide candidates sharing the given start/end keys.
+     */
+    @Synchronized
+    fun getEndpointBucketSnapshot(start: Char, end: Char): List<BucketEntry> {
+        val bucket = endpointBuckets[start to end] ?: return emptyList()
+        return bucket.map { it.copy() }
+    }
+
+    @Synchronized
+    fun currentMaxFrequency(): Float = maxFrequency
+
+    /**
      * Inserts a word with a base frequency into the Trie and SHARK2 endpoint buckets.
      * Indexes over ASCII alphabetic key characters so apostrophe contractions (e.g. don't, I'm)
      * are natively swipeable without needing to lift onto an apostrophe key.
@@ -38,6 +50,7 @@ class TrieLexicon {
     @Synchronized
     fun insert(word: String, frequency: Float = 1.0f) {
         if (word.isBlank()) return
+        val safeFreq = if (frequency.isFinite()) frequency.coerceAtLeast(0f) else 1.0f
         val cleanWord = word.trim().lowercase()
         val keyChars = ArrayList<Char>(cleanWord.length)
         for (ch in cleanWord) {
@@ -48,11 +61,11 @@ class TrieLexicon {
         if (keyChars.isEmpty()) return
         val display = canonicalizeDisplayWord(cleanWord)
 
-        root.maxSubtreeFreq = maxOf(root.maxSubtreeFreq, frequency)
+        root.maxSubtreeFreq = maxOf(root.maxSubtreeFreq, safeFreq)
         var current = root
         for (ch in keyChars) {
             current = current.children.getOrPut(ch) { Node() }
-            current.maxSubtreeFreq = maxOf(current.maxSubtreeFreq, frequency)
+            current.maxSubtreeFreq = maxOf(current.maxSubtreeFreq, safeFreq)
         }
         val isNew = !current.isWord
         if (isNew) {
@@ -70,24 +83,24 @@ class TrieLexicon {
                 val bucket = endpointBuckets.getOrPut(keyPair) { ArrayList() }
                 val existing = bucket.firstOrNull { it.word == display }
                 if (existing != null) {
-                    existing.frequency = maxOf(existing.frequency, frequency)
+                    existing.frequency = maxOf(existing.frequency, safeFreq)
                 } else {
-                    bucket.add(BucketEntry(display, dedup, frequency))
+                    bucket.add(BucketEntry(display, dedup, safeFreq))
                 }
             }
         }
         val prevFreq = wordFrequencies[display]
-        wordFrequencies[display] = maxOf(prevFreq ?: 0f, frequency)
-        wordFrequencies[cleanWord] = maxOf(wordFrequencies[cleanWord] ?: 0f, frequency)
+        wordFrequencies[display] = maxOf(prevFreq ?: 0f, safeFreq)
+        wordFrequencies[cleanWord] = maxOf(wordFrequencies[cleanWord] ?: 0f, safeFreq)
         if (prevFreq == null && !display.contains('\'') && display.length >= 2 && display[0] in 'a'..'z') {
             correctionBuckets.getOrPut(display.length to display[0]) { ArrayList() }.add(display)
         }
 
         current.isWord = true
         val prevNodeFreq = current.frequency
-        current.frequency = maxOf(prevNodeFreq, frequency)
+        current.frequency = maxOf(prevNodeFreq, safeFreq)
         maxFrequency = maxOf(maxFrequency, current.frequency)
-        if (isNew || frequency >= prevNodeFreq) {
+        if (isNew || safeFreq >= prevNodeFreq) {
             current.word = display
         }
     }

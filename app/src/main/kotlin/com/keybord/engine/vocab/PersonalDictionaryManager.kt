@@ -11,6 +11,7 @@ import java.util.Locale
  */
 class PersonalDictionaryManager(private val context: Context?) {
 
+    private val dictLock = Any()
     private val localPersonalDict = HashMap<String, WordEntry>()
 
     init {
@@ -23,15 +24,18 @@ class PersonalDictionaryManager(private val context: Context?) {
     fun addWord(word: String, shortcut: String? = null, frequency: Int = 250, locale: Locale = Locale.getDefault()) {
         val cleanWord = word.trim()
         if (cleanWord.isEmpty()) return
+        val cleanShortcut = shortcut?.trim()?.takeIf { it.isNotEmpty() }
 
-        localPersonalDict[cleanWord.lowercase()] = WordEntry(
-            word = cleanWord,
-            count = frequency,
-            lastUsedTimestamp = System.currentTimeMillis(),
-            isOov = false,
-            shortcut = shortcut?.trim()?.takeIf { it.isNotEmpty() }
-        )
-        saveToPrefs()
+        synchronized(dictLock) {
+            localPersonalDict[cleanWord.lowercase()] = WordEntry(
+                word = cleanWord,
+                count = frequency,
+                lastUsedTimestamp = System.currentTimeMillis(),
+                isOov = false,
+                shortcut = cleanShortcut
+            )
+            saveToPrefsLocked()
+        }
 
         if (context != null) {
             try {
@@ -50,8 +54,10 @@ class PersonalDictionaryManager(private val context: Context?) {
 
     fun deleteWord(word: String) {
         val clean = word.trim().lowercase()
-        localPersonalDict.remove(clean)
-        saveToPrefs()
+        synchronized(dictLock) {
+            localPersonalDict.remove(clean)
+            saveToPrefsLocked()
+        }
         if (context != null) {
             try {
                 context.contentResolver.delete(
@@ -70,7 +76,10 @@ class PersonalDictionaryManager(private val context: Context?) {
      */
     fun getShortcutExpansion(shortcut: String): String? {
         val clean = shortcut.trim().lowercase()
-        return localPersonalDict.values.find { it.shortcut?.lowercase() == clean }?.word
+        if (clean.isEmpty()) return null
+        return synchronized(dictLock) {
+            localPersonalDict.values.find { it.shortcut?.lowercase() == clean }?.word
+        }
     }
 
     /**
@@ -80,34 +89,45 @@ class PersonalDictionaryManager(private val context: Context?) {
         loadFromPrefs()
         if (contentResolver == null) return
         try {
-            val cursor = contentResolver.query(
+            val systemEntries = ArrayList<WordEntry>()
+            contentResolver.query(
                 UserDictionary.Words.CONTENT_URI,
                 arrayOf(UserDictionary.Words.WORD, UserDictionary.Words.FREQUENCY, UserDictionary.Words.SHORTCUT),
                 null, null, null
-            ) ?: return
+            )?.use { cursor ->
+                val now = System.currentTimeMillis()
+                while (cursor.moveToNext()) {
+                    val word = cursor.getString(0)
+                    val freq = cursor.getInt(1)
+                    val shortcut = cursor.getString(2)
+                    if (!word.isNullOrBlank()) {
+                        systemEntries.add(
+                            WordEntry(
+                                word = word,
+                                count = freq,
+                                lastUsedTimestamp = now,
+                                isOov = false,
+                                shortcut = shortcut
+                            )
+                        )
+                    }
+                }
+            } ?: return
 
-            while (cursor.moveToNext()) {
-                val word = cursor.getString(0)
-                val freq = cursor.getInt(1)
-                val shortcut = cursor.getString(2)
-                if (!word.isNullOrBlank()) {
-                    localPersonalDict[word.lowercase()] = WordEntry(
-                        word = word,
-                        count = freq,
-                        lastUsedTimestamp = System.currentTimeMillis(),
-                        isOov = false,
-                        shortcut = shortcut
-                    )
+            if (systemEntries.isNotEmpty()) {
+                synchronized(dictLock) {
+                    for (entry in systemEntries) {
+                        localPersonalDict[entry.word.lowercase()] = entry
+                    }
+                    saveToPrefsLocked()
                 }
             }
-            cursor.close()
-            saveToPrefs()
         } catch (e: Exception) {
             // Permission not granted or provider unavailable
         }
     }
 
-    private fun saveToPrefs() {
+    private fun saveToPrefsLocked() {
         val ctx = context ?: return
         try {
             val prefs = ctx.getSharedPreferences("keybord_personal_dict", Context.MODE_PRIVATE) ?: return
@@ -132,27 +152,39 @@ class PersonalDictionaryManager(private val context: Context?) {
         try {
             val prefs = ctx.getSharedPreferences("keybord_personal_dict", Context.MODE_PRIVATE) ?: return
             val raw = prefs.getString("entries_json", null) ?: return
-            localPersonalDict.clear()
+            val parsed = HashMap<String, WordEntry>()
             val arr = org.json.JSONArray(raw)
+            val now = System.currentTimeMillis()
             for (i in 0 until arr.length()) {
                 val obj = arr.optJSONObject(i) ?: continue
                 val word = obj.optString("word", "").trim()
                 if (word.isNotEmpty()) {
-                    localPersonalDict[word.lowercase()] = WordEntry(
+                    parsed[word.lowercase()] = WordEntry(
                         word = word,
                         count = obj.optInt("count", 250),
-                        lastUsedTimestamp = System.currentTimeMillis(),
+                        lastUsedTimestamp = now,
                         isOov = false,
                         shortcut = obj.optString("shortcut", "").takeIf { it.isNotBlank() }
                     )
                 }
+            }
+            synchronized(dictLock) {
+                localPersonalDict.clear()
+                localPersonalDict.putAll(parsed)
             }
         } catch (_: Exception) {
             // Safe fallback in unit tests
         }
     }
 
-    fun getAllPersonalWords(): List<WordEntry> = localPersonalDict.values.toList()
+    fun getAllPersonalWords(): List<WordEntry> = synchronized(dictLock) {
+        localPersonalDict.values.toList()
+    }
 
-    fun contains(word: String): Boolean = localPersonalDict.containsKey(word.lowercase().trim())
+    fun contains(word: String): Boolean {
+        val clean = word.lowercase().trim()
+        return synchronized(dictLock) {
+            localPersonalDict.containsKey(clean)
+        }
+    }
 }

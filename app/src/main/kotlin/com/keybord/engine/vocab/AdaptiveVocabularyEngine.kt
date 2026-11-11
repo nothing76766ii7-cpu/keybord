@@ -23,9 +23,10 @@ class AdaptiveVocabularyEngine(
         Thread(runnable, "KeybordVocabWriter").apply { isDaemon = true }
     }
     private val penaltyCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    @Volatile private var isShutdown = false
 
     fun getBigramScore(prevWord: String, word: String): Float =
-        storage.getBigramScore(prevWord, word)
+        if (isShutdown) 0f else storage.getBigramScore(prevWord, word)
 
     /**
      * Offloads DB unigram/bigram/trigram persistence off the main UI thread during continuous typing.
@@ -35,22 +36,36 @@ class AdaptiveVocabularyEngine(
         contextWords: List<String> = emptyList(),
         event: LearningEvent = LearningEvent.NORMAL_TYPING
     ) {
+        if (isShutdown || writeExecutor.isShutdown) return
         val contextSnapshot = contextWords.toList()
-        writeExecutor.execute {
-            try {
-                onWordCommitted(word, contextSnapshot, event)
-            } catch (e: Exception) {
-                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal(
-                    "AdaptiveVocabEngine",
-                    "Async word commit failed",
-                    e
-                )
+        try {
+            writeExecutor.execute {
+                if (isShutdown) return@execute
+                try {
+                    onWordCommitted(word, contextSnapshot, event)
+                } catch (e: Exception) {
+                    com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal(
+                        "AdaptiveVocabEngine",
+                        "Async word commit failed",
+                        e
+                    )
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Engine already shutting down
         }
     }
 
     fun shutdown() {
-        writeExecutor.shutdownNow()
+        isShutdown = true
+        writeExecutor.shutdown()
+        try {
+            if (!writeExecutor.awaitTermination(250, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                writeExecutor.shutdownNow()
+            }
+        } catch (_: InterruptedException) {
+            writeExecutor.shutdownNow()
+        }
         try {
             storage.close()
         } catch (_: Exception) {
@@ -116,14 +131,20 @@ class AdaptiveVocabularyEngine(
     }
 
     fun onManualCorrectionAsync(revertedWord: String, correctedWord: String, contextWords: List<String>) {
+        if (isShutdown || writeExecutor.isShutdown) return
         penaltyCache.remove(revertedWord.lowercase().trim())
         val ctx = contextWords.toList()
-        writeExecutor.execute {
-            try {
-                onManualCorrection(revertedWord, correctedWord, ctx)
-            } catch (e: Exception) {
-                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async manual correction failed", e)
+        try {
+            writeExecutor.execute {
+                if (isShutdown) return@execute
+                try {
+                    onManualCorrection(revertedWord, correctedWord, ctx)
+                } catch (e: Exception) {
+                    com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async manual correction failed", e)
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Engine already shutting down
         }
     }
 
@@ -136,13 +157,19 @@ class AdaptiveVocabularyEngine(
     }
 
     fun onScrubDeleteAsync(deletedWord: String) {
+        if (isShutdown || writeExecutor.isShutdown) return
         penaltyCache.remove(deletedWord.lowercase().trim())
-        writeExecutor.execute {
-            try {
-                onScrubDelete(deletedWord)
-            } catch (e: Exception) {
-                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async scrub delete failed", e)
+        try {
+            writeExecutor.execute {
+                if (isShutdown) return@execute
+                try {
+                    onScrubDelete(deletedWord)
+                } catch (e: Exception) {
+                    com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async scrub delete failed", e)
+                }
             }
+        } catch (_: java.util.concurrent.RejectedExecutionException) {
+            // Engine already shutting down
         }
     }
 
