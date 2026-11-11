@@ -287,7 +287,7 @@ class SettingsActivity : Activity() {
     private fun renderAboutScreen() {
         titleTextView.text = "About Keybord"
 
-        contentContainer.addView(createSectionHeader("Keybord v1.1.8"))
+        contentContainer.addView(createSectionHeader("Keybord v1.1.9"))
         val desc = TextView(this).apply {
             text = "The keyboard that gets out of your way.\n\n" +
                     "• 100% On-Device: Zero internet permissions requested.\n" +

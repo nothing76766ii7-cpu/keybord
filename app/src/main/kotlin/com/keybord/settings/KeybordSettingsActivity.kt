@@ -101,7 +101,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val verTag = TextView(this).apply {
-            text = "Obsidian v1.1.8"
+            text = "Obsidian v1.1.9"
             textSize = 11.5f
             typeface = Typeface.MONOSPACE
             setTextColor(UiKit.TEXT_SECONDARY)
@@ -187,7 +187,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
         )
         menuCard.addView(UiKit.createHairlineDivider(this))
         menuCard.addView(
-            buildMenuRow("ℹ", "#1E2230", "About Keybord", "Version 1.1.8 • Zero-internet privacy & engine info") {
+            buildMenuRow("ℹ", "#1E2230", "About Keybord", "Version 1.1.9 • Zero-internet privacy & engine info") {
                 startActivity(Intent(this, AboutActivity::class.java))
             }
         )

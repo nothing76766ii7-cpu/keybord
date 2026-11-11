@@ -79,7 +79,7 @@ class AboutActivity : AppCompatActivity() {
         )
         brandCard.addView(
             TextView(this).apply {
-                text = "Version 1.1.8"
+                text = "Version 1.1.9"
                 textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(UiKit.ACCENT_PRIMARY)
@@ -110,8 +110,9 @@ class AboutActivity : AppCompatActivity() {
         )
         content.addView(
             buildFeatureCard(
-                "⚡ What's Inside v1.1.8",
+                "⚡ What's Inside v1.1.9",
                 "• Obsidian Tactile & Clean Porcelain UI across IME, Tools Drawer & Settings\n" +
+                    "• On-keyboard Base32 Studio: random Base32 keys, Text/Hex Encode & Decode, and live 30s TOTP 2FA\n" +
                     "• Bilingual English + Hinglish glide typing, suggestions & auto-correct\n" +
                     "• Expanded Tools & Rambler quick panel + dedicated Writing Tools studio\n" +
                     "• Live Height & Buttons Customisation Studio + Accent Swatches\n" +

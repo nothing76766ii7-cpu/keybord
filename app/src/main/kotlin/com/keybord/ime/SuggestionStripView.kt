@@ -37,6 +37,7 @@ class SuggestionStripView @JvmOverloads constructor(
     private lateinit var toolsBtn: TextView
     private lateinit var clipboardBtn: TextView
     private lateinit var emojiBtn: TextView
+    private lateinit var b32Btn: TextView
     private lateinit var magicBtn: TextView
     private lateinit var micBtn: TextView
     private lateinit var settingsBtn: TextView
@@ -57,6 +58,7 @@ class SuggestionStripView @JvmOverloads constructor(
     private var isMagicBarVisible = false
     private var isEmojiActive = false
     private var isToolsActive = false
+    private var isBase32Active = false
     private var isMicListening = false
     private var hasRamblerRevertChunk = false
     private var lastCandidates: List<String> = emptyList()
@@ -66,6 +68,7 @@ class SuggestionStripView @JvmOverloads constructor(
     var onToolsGridClicked: (() -> Unit)? = null
     var onClipboardIconClicked: (() -> Unit)? = null
     var onEmojiIconClicked: (() -> Unit)? = null
+    var onBase32Clicked: (() -> Unit)? = null
     var onSettingsIconClicked: (() -> Unit)? = null
     var onRecentClipDismissed: ((Long) -> Unit)? = null
     var onRecentClipSelected: ((String) -> Unit)? = null
@@ -158,7 +161,7 @@ class SuggestionStripView @JvmOverloads constructor(
         magicScrollView.addView(magicChipsRow)
         addView(magicScrollView)
 
-        // Row 4: Stitch Toolbar Rail (6 crisp quick-action slots)
+        // Row 4: Stitch Toolbar Rail (7 crisp quick-action slots)
         toolbarRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -166,20 +169,25 @@ class SuggestionStripView @JvmOverloads constructor(
             layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (36 * dp).toInt())
         }
 
-        toolsBtn = createRailButton("⊞", dp, 17f) { onToolsGridClicked?.invoke() }
-        clipboardBtn = createRailButton("📋", dp, 15.5f) { onClipboardIconClicked?.invoke() }
-        emojiBtn = createRailButton("😊", dp, 16f) { onEmojiIconClicked?.invoke() }
-        magicBtn = createRailButton("✨ AI", dp, 12.5f) { toggleMagicBar() }.apply {
+        toolsBtn = createRailButton("⊞", dp, 16.5f) { onToolsGridClicked?.invoke() }
+        clipboardBtn = createRailButton("📋", dp, 15f) { onClipboardIconClicked?.invoke() }
+        emojiBtn = createRailButton("😊", dp, 15.5f) { onEmojiIconClicked?.invoke() }
+        b32Btn = createRailButton("B32", dp, 11.5f) { onBase32Clicked?.invoke() }.apply {
+            typeface = Typeface.MONOSPACE
+            setPadding((5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt())
+        }
+        magicBtn = createRailButton("✨ AI", dp, 12f) { toggleMagicBar() }.apply {
             typeface = Typeface.DEFAULT_BOLD
-            setPadding((9 * dp).toInt(), (4 * dp).toInt(), (9 * dp).toInt(), (4 * dp).toInt())
+            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
             layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.15f)
         }
-        micBtn = createRailButton("🎙", dp, 16f) { onMicClicked?.invoke() }
-        settingsBtn = createRailButton("⚙", dp, 16.5f) { onSettingsIconClicked?.invoke() }
+        micBtn = createRailButton("🎙", dp, 15.5f) { onMicClicked?.invoke() }
+        settingsBtn = createRailButton("⚙", dp, 16f) { onSettingsIconClicked?.invoke() }
 
         toolbarRow.addView(toolsBtn)
         toolbarRow.addView(clipboardBtn)
         toolbarRow.addView(emojiBtn)
+        toolbarRow.addView(b32Btn)
         toolbarRow.addView(magicBtn)
         toolbarRow.addView(micBtn)
         toolbarRow.addView(settingsBtn)
@@ -219,13 +227,28 @@ class SuggestionStripView @JvmOverloads constructor(
 
     fun setEmojiPanelActive(active: Boolean) {
         isEmojiActive = active
-        if (active) isToolsActive = false
+        if (active) {
+            isToolsActive = false
+            isBase32Active = false
+        }
         applyTheme()
     }
 
     fun setToolsPanelActive(active: Boolean) {
         isToolsActive = active
-        if (active) isEmojiActive = false
+        if (active) {
+            isEmojiActive = false
+            isBase32Active = false
+        }
+        applyTheme()
+    }
+
+    fun setBase32PanelActive(active: Boolean) {
+        isBase32Active = active
+        if (active) {
+            isEmojiActive = false
+            isToolsActive = false
+        }
         applyTheme()
     }
 
@@ -343,6 +366,12 @@ class SuggestionStripView @JvmOverloads constructor(
         clipboardBtn.setTextColor(textColor)
         emojiBtn.setTextColor(if (isEmojiActive) accent else textColor)
         emojiBtn.background = if (isEmojiActive) {
+            UiKit.roundedDrawable(context, Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)), 8f)
+        } else {
+            null
+        }
+        b32Btn.setTextColor(if (isBase32Active) accent else secondaryColor)
+        b32Btn.background = if (isBase32Active) {
             UiKit.roundedDrawable(context, Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)), 8f)
         } else {
             null

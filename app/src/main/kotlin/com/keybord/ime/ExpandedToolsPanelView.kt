@@ -50,6 +50,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
     var onCollapseClicked: (() -> Unit)? = null
     var onOpenClipboardClicked: (() -> Unit)? = null
     var onOpenEmojiClicked: (() -> Unit)? = null
+    var onOpenBase32Clicked: (() -> Unit)? = null
     var onOpenWritingToolsClicked: (() -> Unit)? = null
     var onOpenLayoutStudioClicked: (() -> Unit)? = null
     var onToggleOneHandedClicked: (() -> Unit)? = null
@@ -324,7 +325,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
             ToolTile("✋", "One-Hand", if (isOneHandedEnabled) "ON" else null, active = isOneHandedEnabled) { onToggleOneHandedClicked?.invoke() },
             ToolTile("🎨", "Themes") { onOpenThemesClicked?.invoke() },
             ToolTile("✨", "Writing") { onOpenWritingToolsClicked?.invoke() },
-            ToolTile("🌐", "Hinglish", if (isHinglishEnabled) "ON" else "OFF", active = isHinglishEnabled) { onToggleHinglishClicked?.invoke() },
+            ToolTile("🔐", "Base32") { onOpenBase32Clicked?.invoke() },
             ToolTile("⚙", "Settings") { onOpenSettingsClicked?.invoke() }
         )
 
@@ -399,7 +400,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         }
 
         if (::langPillTv.isInitialized) {
-            langPillTv.text = if (isHinglishEnabled) "English + Hinglish" else "English • QWERTY"
+            langPillTv.text = if (isHinglishEnabled) "🌐 English + Hinglish" else "🌐 English • QWERTY"
         }
     }
 

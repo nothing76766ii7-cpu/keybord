@@ -75,6 +75,7 @@ class KeybordIME : InputMethodService() {
     private lateinit var emojiPanelView: EmojiPanelView
     private lateinit var expandedToolsPanel: ExpandedToolsPanelView
     private lateinit var inlineClipboardTray: InlineClipboardTrayView
+    private lateinit var base32PanelView: Base32PanelView
 
     // State & Prefs
     private var baseTheme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
@@ -371,6 +372,9 @@ class KeybordIME : InputMethodService() {
             onEmojiIconClicked = {
                 toggleEmojiPanel()
             }
+            onBase32Clicked = {
+                toggleBase32Panel()
+            }
             onSettingsIconClicked = {
                 launchSettings()
             }
@@ -510,6 +514,7 @@ class KeybordIME : InputMethodService() {
             onCollapseClicked = { showKeyboardMain() }
             onOpenClipboardClicked = { toggleInlineClipboardTray() }
             onOpenEmojiClicked = { toggleEmojiPanel() }
+            onOpenBase32Clicked = { toggleBase32Panel() }
             onOpenWritingToolsClicked = { launchActivity(WritingToolsActivity::class.java) }
             onOpenLayoutStudioClicked = { launchActivity(KeyboardLayoutCustomizeActivity::class.java) }
             onToggleOneHandedClicked = {
@@ -562,6 +567,36 @@ class KeybordIME : InputMethodService() {
             )
         }
         rootContainer.addView(inlineClipboardTray)
+
+        // 6. On-Keyboard Base32 Studio (initially hidden)
+        base32PanelView = Base32PanelView(this).apply {
+            theme = activeTheme
+            visibility = View.GONE
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            onInsertText = { text ->
+                commitBase32Text(text)
+            }
+            onReplaceSelectionOrInsert = { text ->
+                commitBase32Text(text)
+            }
+            onCopyText = { text ->
+                clipboardManager.copyToClipboard(text, "Base32 Studio")
+                Toast.makeText(this@KeybordIME, "Copied to clipboard", Toast.LENGTH_SHORT).show()
+            }
+            onRequestClipboardText = {
+                readLatestClipboardText()
+            }
+            onRequestAppText = {
+                readActiveAppText()
+            }
+            onBackToKeyboardClicked = {
+                showKeyboardMain()
+            }
+        }
+        rootContainer.addView(base32PanelView)
 
         // Intercept Touch for Glide Typing & Multi-Touch Rollover
         keyboardFrame.setOnTouchListener { _, event ->
@@ -639,10 +674,16 @@ class KeybordIME : InputMethodService() {
 
         refreshPredictions()
         updateRecentClipsInStrip()
+        if (::base32PanelView.isInitialized && base32PanelView.visibility == View.VISIBLE) {
+            base32PanelView.onPanelOpened()
+        }
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         super.onFinishInputView(finishingInput)
+        if (::base32PanelView.isInitialized) {
+            base32PanelView.pauseTicker()
+        }
         if (voiceRamblerManager.isListening) {
             voiceRamblerManager.stopListening()
         }
@@ -1492,10 +1533,15 @@ class KeybordIME : InputMethodService() {
         if (::emojiPanelView.isInitialized) emojiPanelView.visibility = View.GONE
         if (::expandedToolsPanel.isInitialized) expandedToolsPanel.visibility = View.GONE
         if (::inlineClipboardTray.isInitialized) inlineClipboardTray.visibility = View.GONE
+        if (::base32PanelView.isInitialized) {
+            base32PanelView.visibility = View.GONE
+            base32PanelView.pauseTicker()
+        }
         if (::keyboardFrame.isInitialized) keyboardFrame.visibility = View.VISIBLE
         if (::suggestionStripView.isInitialized) {
             suggestionStripView.setEmojiPanelActive(false)
             suggestionStripView.setToolsPanelActive(false)
+            suggestionStripView.setBase32PanelActive(false)
         }
     }
 
@@ -1510,6 +1556,8 @@ class KeybordIME : InputMethodService() {
             expandedToolsPanel.setRawState(ramblerController.isShowingRawTranscript())
             emojiPanelView.visibility = View.GONE
             inlineClipboardTray.visibility = View.GONE
+            base32PanelView.visibility = View.GONE
+            base32PanelView.pauseTicker()
             keyboardFrame.visibility = View.GONE
             expandedToolsPanel.visibility = View.VISIBLE
             suggestionStripView.setToolsPanelActive(true)
@@ -1522,9 +1570,25 @@ class KeybordIME : InputMethodService() {
         } else {
             expandedToolsPanel.visibility = View.GONE
             inlineClipboardTray.visibility = View.GONE
+            base32PanelView.visibility = View.GONE
+            base32PanelView.pauseTicker()
             keyboardFrame.visibility = View.GONE
             emojiPanelView.visibility = View.VISIBLE
             suggestionStripView.setEmojiPanelActive(true)
+        }
+    }
+
+    private fun toggleBase32Panel() {
+        if (base32PanelView.visibility == View.VISIBLE) {
+            showKeyboardMain()
+        } else {
+            emojiPanelView.visibility = View.GONE
+            expandedToolsPanel.visibility = View.GONE
+            inlineClipboardTray.visibility = View.GONE
+            keyboardFrame.visibility = View.GONE
+            base32PanelView.visibility = View.VISIBLE
+            base32PanelView.onPanelOpened()
+            suggestionStripView.setBase32PanelActive(true)
         }
     }
 
@@ -1534,8 +1598,11 @@ class KeybordIME : InputMethodService() {
         } else {
             emojiPanelView.visibility = View.GONE
             expandedToolsPanel.visibility = View.GONE
+            base32PanelView.visibility = View.GONE
+            base32PanelView.pauseTicker()
             suggestionStripView.setEmojiPanelActive(false)
             suggestionStripView.setToolsPanelActive(false)
+            suggestionStripView.setBase32PanelActive(false)
             inlineClipboardTray.attachClipboard(
                 manager = clipboardManager,
                 onSelect = { text ->
@@ -1549,6 +1616,49 @@ class KeybordIME : InputMethodService() {
             keyboardFrame.visibility = View.GONE
             inlineClipboardTray.visibility = View.VISIBLE
         }
+    }
+
+    private fun commitBase32Text(text: String) {
+        val ic = currentInputConnection ?: return
+        ic.beginBatchEdit()
+        try {
+            val selected = try { ic.getSelectedText(0)?.toString() } catch (_: Exception) { null }
+            if (selected.isNullOrEmpty()) {
+                ic.finishComposingText()
+            }
+            ic.commitText(text, 1)
+        } finally {
+            ic.endBatchEdit()
+        }
+        currentWordPrefix.clear()
+        autoInsertedSpaceBeforePunctuation = false
+        lastGlideCommittedWord = null
+        lastAutoCorrectedOriginal = null
+        lastAutoCorrectedReplacement = null
+        syncWordPrefixFromCursor(ic)
+        updateAutoCapShiftState()
+        refreshPredictions()
+    }
+
+    private fun readLatestClipboardText(): String? {
+        val sys = getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+        val primary = try {
+            sys?.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString()
+        } catch (_: Exception) {
+            null
+        }
+        if (!primary.isNullOrBlank()) return primary
+        return clipboardManager.storage.getAllItems().firstOrNull()?.text
+    }
+
+    private fun readActiveAppText(): String? {
+        val ic = currentInputConnection ?: return null
+        val selected = try { ic.getSelectedText(0)?.toString() } catch (_: Exception) { null }
+        if (!selected.isNullOrBlank()) return selected
+        val before = try { ic.getTextBeforeCursor(400, 0)?.toString() } catch (_: Exception) { null }
+        val line = before?.substringAfterLast('\n')?.trim().orEmpty()
+        if (line.isNotBlank()) return line
+        return before?.trim()?.takeIf { it.isNotBlank() }
     }
 
     private fun launchActivity(activityClass: Class<*>) {
@@ -1585,5 +1695,6 @@ class KeybordIME : InputMethodService() {
             }
         }
         if (::inlineClipboardTray.isInitialized) inlineClipboardTray.theme = effective
+        if (::base32PanelView.isInitialized) base32PanelView.theme = effective
     }
 }
