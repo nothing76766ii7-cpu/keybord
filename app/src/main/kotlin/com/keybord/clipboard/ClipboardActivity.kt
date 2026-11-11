@@ -126,7 +126,7 @@ class ClipboardActivity : AppCompatActivity() {
         val searchBox = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            background = UiKit.roundedDrawable(this@ClipboardActivity, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoWellDrawable(this@ClipboardActivity, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE)
             setPadding((14 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
         }
         val searchIcon = TextView(this).apply {
@@ -454,7 +454,7 @@ class ClipboardActivity : AppCompatActivity() {
                 item.isPinned -> Color.argb(110, Color.red(UiKit.ACCENT_PRIMARY), Color.green(UiKit.ACCENT_PRIMARY), Color.blue(UiKit.ACCENT_PRIMARY))
                 else -> UiKit.BORDER_SUBTLE
             }
-            holder.view.background = UiKit.roundedDrawable(holder.view.context, fill, 16f, stroke, 1f)
+            holder.view.background = UiKit.skeuoCardDrawable(holder.view.context, fill, 16f, stroke, 2f)
 
             holder.view.setOnClickListener { onItemClick(item) }
             holder.view.setOnLongClickListener {

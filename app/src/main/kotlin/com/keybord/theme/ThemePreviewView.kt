@@ -193,8 +193,19 @@ class ThemePreviewView @JvmOverloads constructor(
             )
         }
 
+        val isLightBg = Color.luminance(theme.keyboardBackground.colorStart) > 0.5f
+        val shadowP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = if (isLightBg) Color.argb(34, 15, 23, 42) else Color.argb(130, 0, 0, 0)
+        }
+        val lipP = Paint(Paint.ANTI_ALIAS_FLAG)
+        val bevelP = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            strokeWidth = 1f * density
+            color = if (isLightBg) Color.argb(200, 255, 255, 255) else Color.argb(46, 255, 255, 255)
+        }
+
         for ((key, rect) in previewKeyLabels) {
             val isEnter = key == "Enter"
+            val isSpace = key == " "
             val isFunc = key == "⇧" || key == "⌫" || key == "?123"
             val overrideColor = when {
                 isEnter -> theme.accentKeyColor
@@ -206,33 +217,63 @@ class ThemePreviewView @JvmOverloads constructor(
                 effectEngine.drawStaticCyberGlow(canvas, rect, cornerRadius, theme.keyBorderColor, borderStrokePx)
             }
 
+            val topC: Int
+            val botC: Int
             if (overrideColor != null) {
-                keyPaint.shader = null
-                keyPaint.color = overrideColor
+                topC = com.keybord.ui.UiKit.shadeColor(overrideColor, 0.12f)
+                botC = com.keybord.ui.UiKit.shadeColor(overrideColor, -0.14f)
             } else if (theme.keyFaceColor.isGradient) {
-                keyPaint.shader = LinearGradient(
-                    rect.left, rect.top, rect.left, rect.bottom,
-                    theme.keyFaceColor.primaryColor,
-                    theme.keyFaceColor.secondaryColor,
-                    Shader.TileMode.CLAMP
-                )
+                topC = theme.keyFaceColor.primaryColor
+                botC = theme.keyFaceColor.secondaryColor
             } else {
-                keyPaint.shader = null
-                keyPaint.color = theme.keyFaceColor.primaryColor
+                topC = com.keybord.ui.UiKit.shadeColor(theme.keyFaceColor.primaryColor, 0.08f)
+                botC = com.keybord.ui.UiKit.shadeColor(theme.keyFaceColor.primaryColor, -0.10f)
             }
 
+            if (theme.effectStyle != EffectStyle.CYBER_NEON) {
+                canvas.drawRoundRect(
+                    RectF(rect.left, rect.top + 1.8f * density, rect.right, rect.bottom + 1.8f * density),
+                    cornerRadius, cornerRadius, shadowP
+                )
+                lipP.color = com.keybord.ui.UiKit.shadeColor(botC, -0.45f)
+                canvas.drawRoundRect(
+                    RectF(rect.left, rect.top + 1.1f * density, rect.right, rect.bottom + 1.1f * density),
+                    cornerRadius, cornerRadius, lipP
+                )
+            }
+
+            keyPaint.shader = if (Color.alpha(topC) >= 250 && topC != botC) {
+                LinearGradient(rect.left, rect.top, rect.left, rect.bottom, topC, botC, Shader.TileMode.CLAMP)
+            } else null
+            keyPaint.color = topC
+
             canvas.drawRoundRect(rect, cornerRadius, cornerRadius, keyPaint)
+            keyPaint.shader = null
+
+            val padX = cornerRadius.coerceAtLeast(3f * density)
+            if (theme.effectStyle != EffectStyle.CYBER_NEON && rect.width() > padX * 2f) {
+                canvas.drawLine(rect.left + padX, rect.top + 0.7f * density, rect.right - padX, rect.top + 0.7f * density, bevelP)
+            }
+
             if (theme.keyBorderWidthDp > 0f) {
                 canvas.drawRoundRect(rect, cornerRadius, cornerRadius, borderPaint)
             }
 
-            textPaint.color = if (isEnter && theme.accentKeyColor != null) {
-                theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
-            } else {
-                theme.keyLabelColorPrimary
+            textPaint.color = when {
+                isEnter && theme.accentKeyColor != null -> theme.accentKeyTextColor ?: theme.keyLabelColorPrimary
+                isSpace -> theme.keyLabelColorSecondary
+                else -> theme.keyLabelColorPrimary
             }
+            val labelText = when {
+                isSpace -> "English"
+                isEnter && theme.accentKeyColor != null -> "➤"
+                else -> key
+            }
+            val savedSize = textPaint.textSize
+            if (isSpace) textPaint.textSize = savedSize * 0.7f
             val textY = rect.centerY() - (textPaint.descent() + textPaint.ascent()) / 2
-            canvas.drawText(key, rect.centerX(), textY, textPaint)
+            canvas.drawText(labelText, rect.centerX(), textY, textPaint)
+            textPaint.textSize = savedSize
         }
 
         // Render over-key effects (Mech Glow rainbow edge sweep / Key Pulse / Glow Flow)

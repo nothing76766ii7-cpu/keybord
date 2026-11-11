@@ -31,7 +31,7 @@ class InlineClipboardTrayView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
-    var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
+    var theme: ThemeModel = BuiltInThemes.SKEUO_DARK_GRAPHITE
         set(value) {
             field = value
             applyTheme()
@@ -183,20 +183,15 @@ class InlineClipboardTrayView @JvmOverloads constructor(
         setBackgroundColor(bg)
         val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
         val cardBg = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
-        searchBox.background = UiKit.roundedDrawable(context, cardBg, 12f, theme.keyBorderColor, 1f)
+        val wellBg = KeyboardEffectEngine.compositeOver(theme.suggestionStripBgColor, bg)
+        searchBox.background = UiKit.skeuoWellDrawable(context, wellBg, 12f, theme.keyBorderColor)
         searchInput.setTextColor(theme.keyLabelColorPrimary)
         searchInput.setHintTextColor(theme.keyLabelColorSecondary)
         emptyText.setTextColor(theme.keyLabelColorSecondary)
 
-        openAllButton.background = UiKit.roundedDrawable(
-            context,
-            Color.argb(46, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            10f,
-            Color.argb(120, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            1f
-        )
-        openAllButton.setTextColor(theme.keyLabelColorPrimary)
-        closeButton.background = UiKit.roundedDrawable(context, cardBg, 10f, theme.keyBorderColor, 1f)
+        openAllButton.background = UiKit.skeuoButtonDrawable(context, accent, 10f)
+        openAllButton.setTextColor(Color.WHITE)
+        closeButton.background = UiKit.skeuoButtonDrawable(context, cardBg, 10f, theme.keyBorderColor)
         closeButton.setTextColor(theme.keyLabelColorSecondary)
 
         if (::categoryContainer.isInitialized) {
@@ -224,13 +219,11 @@ class InlineClipboardTrayView @JvmOverloads constructor(
                 textSize = 12f
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                 setTextColor(if (isSelected) Color.WHITE else theme.keyLabelColorSecondary)
-                background = UiKit.roundedDrawable(
-                    context,
-                    if (isSelected) accent else chipInactiveBg,
-                    12f,
-                    if (isSelected) null else theme.keyBorderColor,
-                    1f
-                )
+                background = if (isSelected) {
+                    UiKit.skeuoButtonDrawable(context, accent, 12f)
+                } else {
+                    UiKit.skeuoCardDrawable(context, chipInactiveBg, 12f, theme.keyBorderColor, 1f)
+                }
                 setPadding((12 * dp).toInt(), (5 * dp).toInt(), (12 * dp).toInt(), (5 * dp).toInt())
                 layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = (6 * dp).toInt()
@@ -355,7 +348,7 @@ class InlineClipboardTrayView @JvmOverloads constructor(
             val cardColor = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
             val stroke = if (item.isPinned) accent else theme.keyBorderColor
 
-            holder.card.background = UiKit.roundedDrawable(holder.card.context, cardColor, 14f, stroke, if (item.isPinned) 1.5f else 1f)
+            holder.card.background = UiKit.skeuoCardDrawable(holder.card.context, cardColor, 14f, stroke, if (item.isPinned) 2.5f else 1.5f)
             holder.tvCategory.text = item.category
             holder.tvCategory.setTextColor(accent)
             holder.tvCategory.background = UiKit.roundedDrawable(

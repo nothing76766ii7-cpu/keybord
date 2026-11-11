@@ -5,22 +5,27 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.keyboard.engine.magicwrite.WritingStyle
+import com.keybord.engine.ai.AiWriterClient
 import com.keybord.ui.UiKit
 
 /**
- * Stitch Screen 06: Writing Tools (Rambler Voice Cleanup & Magic Writing)
- * backed by persisted SharedPreferences ("keybord_writing_prefs").
+ * Writing Tools Studio: BYOK AI Writer Provider Setup,
+ * Rambler Voice Cleanup, and On-Device Magic Rewriter.
  */
 class WritingToolsActivity : AppCompatActivity() {
 
     private val prefs by lazy { getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
+    private lateinit var aiClient: AiWriterClient
 
     private lateinit var rawPreviewTv: TextView
     private lateinit var processedPreviewTv: TextView
@@ -28,8 +33,18 @@ class WritingToolsActivity : AppCompatActivity() {
     private var selectedTone: WritingStyle = WritingStyle.FORMAL
     private val toneButtons = mutableListOf<Pair<WritingStyle, TextView>>()
 
+    private var selectedProvider: AiWriterClient.Provider = AiWriterClient.Provider.GEMINI
+    private lateinit var aiStatusBadge: TextView
+    private lateinit var endpointInput: EditText
+    private lateinit var modelInput: EditText
+    private lateinit var apiKeyInput: EditText
+    private lateinit var cloudFieldsContainer: LinearLayout
+    private lateinit var apiTestStatusTv: TextView
+    private val providerButtons = mutableMapOf<AiWriterClient.Provider, TextView>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        aiClient = AiWriterClient(this)
 
         val savedToneName = prefs.getString(KEY_DEFAULT_TONE, WritingStyle.FORMAL.name) ?: WritingStyle.FORMAL.name
         selectedTone = WritingStyle.values().firstOrNull { it.name == savedToneName } ?: WritingStyle.FORMAL
@@ -60,7 +75,7 @@ class WritingToolsActivity : AppCompatActivity() {
             UiKit.createHeaderBar(
                 this,
                 title = "Writing Tools",
-                subtitle = "On-device writing intelligence — zero cloud uploads.",
+                subtitle = "On-device Rambler & Rewriter + optional BYOK Cloud AI",
                 showBack = true,
                 trailingView = headerBadge
             )
@@ -75,7 +90,10 @@ class WritingToolsActivity : AppCompatActivity() {
             setPadding(0, 0, 0, (14 * dp).toInt())
         }
 
-        // Card 1: Rambler Voice Cleanup
+        // Card 1: BYOK AI Writer API Configuration
+        content.addView(buildByokAiCard())
+
+        // Card 2: Rambler Voice Cleanup
         val ramblerCard = UiKit.createCardContainer(this, paddingDp = 16f, radiusDp = 18f, bottomMarginDp = 14f)
         ramblerCard.addView(buildCardTitleRow("🎙", "Rambler Voice Cleanup", "Real-time local acoustic de-cluttering", "Local NPU", UiKit.ACCENT_AI))
 
@@ -173,12 +191,12 @@ class WritingToolsActivity : AppCompatActivity() {
         magicCard.addView(buildToneGrid())
         content.addView(magicCard)
 
-        // Bottom 100% On-Device Privacy Banner
+        // Bottom Honest Privacy Banner
         content.addView(
             UiKit.createPrivacyFooter(
                 this,
-                "100% On-Device Rust Engine",
-                "Zero Internet Permission requested. No keystrokes, audio, or text clips ever leave local device sandbox memory."
+                "Zero Telemetry • Local Core + Optional BYOK AI",
+                "Normal typing, clipboard, and offline Rust rewriting never leave your device. Cloud AI Writer only contacts your own BYOK endpoint when triggered."
             )
         )
 
@@ -186,6 +204,310 @@ class WritingToolsActivity : AppCompatActivity() {
         root.addView(scroll)
         setContentView(root)
         refreshTransformationPreview()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (::aiClient.isInitialized) {
+            aiClient.shutdown()
+        }
+    }
+
+    private fun buildByokAiCard(): LinearLayout {
+        val dp = resources.displayMetrics.density
+        val cfg = aiClient.loadConfig()
+        selectedProvider = cfg.provider
+
+        val card = UiKit.createCardContainer(this, paddingDp = 16f, radiusDp = 18f, bottomMarginDp = 14f)
+
+        val headerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, 0, 0, (12 * dp).toInt())
+        }
+        headerRow.addView(
+            TextView(this).apply {
+                text = "🤖"
+                textSize = 18f
+                gravity = Gravity.CENTER
+                background = UiKit.skeuoIconWellDrawable(this@WritingToolsActivity, UiKit.ACCENT_AI_SOFT, 12f)
+                val sz = (38 * dp).toInt()
+                layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (12 * dp).toInt() }
+            }
+        )
+        val headerCol = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        headerCol.addView(
+            TextView(this).apply {
+                text = "AI Writer Engine (BYOK)"
+                textSize = 16.5f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(UiKit.TEXT_PRIMARY)
+            }
+        )
+        headerCol.addView(
+            TextView(this).apply {
+                text = "Connect Gemini or any OpenAI-compatible endpoint"
+                textSize = 12f
+                setTextColor(UiKit.TEXT_SECONDARY)
+            }
+        )
+        headerRow.addView(headerCol)
+
+        aiStatusBadge = UiKit.createBadgePill(
+            this,
+            if (cfg.isCloudConfigured) "● Configured" else "● Offline Mode",
+            if (cfg.isCloudConfigured) UiKit.SUCCESS_BG else UiKit.WARNING_BG,
+            if (cfg.isCloudConfigured) UiKit.SUCCESS_FG else UiKit.WARNING_FG,
+            if (cfg.isCloudConfigured) UiKit.SUCCESS_BORDER else UiKit.BORDER_SUBTLE
+        )
+        headerRow.addView(aiStatusBadge)
+        card.addView(headerRow)
+
+        val providerRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (10 * dp).toInt()
+            }
+        }
+        providerButtons.clear()
+
+        fun makeFieldLabel(label: String): TextView = TextView(this).apply {
+            text = label.uppercase()
+            textSize = 10.5f
+            letterSpacing = 0.06f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(UiKit.TEXT_SECONDARY)
+            setPadding(0, (4 * dp).toInt(), 0, (4 * dp).toInt())
+        }
+
+        fun makeInputBox(hintText: String, initialValue: String, isSecret: Boolean = false): EditText =
+            EditText(this).apply {
+                hint = hintText
+                setText(initialValue)
+                textSize = 13f
+                setTextColor(UiKit.TEXT_PRIMARY)
+                setHintTextColor(UiKit.TEXT_MUTED)
+                background = UiKit.skeuoWellDrawable(this@WritingToolsActivity, UiKit.SURFACE_INPUT, 12f, UiKit.BORDER_SUBTLE)
+                setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (10 * dp).toInt())
+                setSingleLine(true)
+                inputType = if (isSecret) {
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+                } else {
+                    InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
+                }
+                layoutParams = LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.WRAP_CONTENT
+                ).apply { bottomMargin = (8 * dp).toInt() }
+            }
+
+        cloudFieldsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        endpointInput = makeInputBox(
+            AiWriterClient.Provider.GEMINI.defaultEndpoint,
+            cfg.endpointUrl
+        )
+        modelInput = makeInputBox(
+            AiWriterClient.Provider.GEMINI.defaultModel,
+            cfg.model
+        ).apply {
+            inputType = InputType.TYPE_CLASS_TEXT
+        }
+        apiKeyInput = makeInputBox(
+            "Paste your API key (stored locally only)",
+            cfg.apiKey,
+            isSecret = true
+        )
+
+        var keyVisible = false
+        val keyRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                bottomMargin = (8 * dp).toInt()
+            }
+        }
+        apiKeyInput.layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+            marginEnd = (6 * dp).toInt()
+        }
+        val toggleKeyBtn = UiKit.createPillButton(this, "Show", filled = false) {
+            keyVisible = !keyVisible
+            val sel = apiKeyInput.selectionStart
+            apiKeyInput.inputType = if (keyVisible) {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            } else {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            if (sel >= 0 && sel <= apiKeyInput.text.length) {
+                apiKeyInput.setSelection(sel)
+            }
+        }
+        // Keep button label synchronized
+        toggleKeyBtn.setOnClickListener {
+            keyVisible = !keyVisible
+            val sel = apiKeyInput.selectionStart
+            apiKeyInput.inputType = if (keyVisible) {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+            } else {
+                InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+            }
+            toggleKeyBtn.text = if (keyVisible) "Hide" else "Show"
+            if (sel >= 0 && sel <= apiKeyInput.text.length) {
+                apiKeyInput.setSelection(sel)
+            }
+        }
+        keyRow.addView(apiKeyInput)
+        keyRow.addView(toggleKeyBtn)
+
+        cloudFieldsContainer.addView(makeFieldLabel("Endpoint URL"))
+        cloudFieldsContainer.addView(endpointInput)
+        cloudFieldsContainer.addView(makeFieldLabel("Model Name"))
+        cloudFieldsContainer.addView(modelInput)
+        cloudFieldsContainer.addView(makeFieldLabel("API Key (BYOK)"))
+        cloudFieldsContainer.addView(keyRow)
+
+        fun refreshProviderUi(updateDefaults: Boolean) {
+            if (updateDefaults && selectedProvider != AiWriterClient.Provider.OFFLINE_ONLY) {
+                val curUrl = endpointInput.text?.toString()?.trim().orEmpty()
+                val curModel = modelInput.text?.toString()?.trim().orEmpty()
+                val isOtherDefaultUrl = curUrl.isBlank() || AiWriterClient.Provider.values().any { it.defaultEndpoint == curUrl }
+                val isOtherDefaultModel = curModel.isBlank() || AiWriterClient.Provider.values().any { it.defaultModel == curModel }
+                if (isOtherDefaultUrl) endpointInput.setText(selectedProvider.defaultEndpoint)
+                if (isOtherDefaultModel) modelInput.setText(selectedProvider.defaultModel)
+                endpointInput.hint = selectedProvider.defaultEndpoint
+                modelInput.hint = selectedProvider.defaultModel
+            }
+            for ((prov, btn) in providerButtons) {
+                val active = (prov == selectedProvider)
+                btn.setTextColor(if (active) Color.WHITE else UiKit.TEXT_SECONDARY)
+                btn.typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                btn.background = UiKit.skeuoButtonDrawable(
+                    this,
+                    if (active) UiKit.ACCENT_AI else UiKit.SURFACE_ELEVATED,
+                    11f,
+                    if (active) UiKit.ACCENT_AI else UiKit.BORDER_SUBTLE
+                )
+            }
+            cloudFieldsContainer.visibility =
+                if (selectedProvider == AiWriterClient.Provider.OFFLINE_ONLY) View.GONE else View.VISIBLE
+        }
+
+        val providers = AiWriterClient.Provider.values()
+        providers.forEachIndexed { idx, prov ->
+            val btn = TextView(this).apply {
+                text = prov.displayName
+                textSize = 11.5f
+                gravity = Gravity.CENTER
+                setSingleLine(true)
+                setPadding((6 * dp).toInt(), (8 * dp).toInt(), (6 * dp).toInt(), (8 * dp).toInt())
+                layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (idx < providers.lastIndex) marginEnd = (6 * dp).toInt()
+                }
+                setOnClickListener {
+                    selectedProvider = prov
+                    refreshProviderUi(updateDefaults = true)
+                }
+            }
+            providerButtons[prov] = btn
+            providerRow.addView(btn)
+        }
+        card.addView(providerRow)
+        card.addView(cloudFieldsContainer)
+
+        apiTestStatusTv = TextView(this).apply {
+            textSize = 12f
+            visibility = View.GONE
+            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (4 * dp).toInt()
+                bottomMargin = (8 * dp).toInt()
+            }
+        }
+
+        fun updateStatusBanner(msg: String, isError: Boolean = false, isLoading: Boolean = false) {
+            apiTestStatusTv.visibility = View.VISIBLE
+            apiTestStatusTv.text = msg
+            val (bg, fg, stroke) = when {
+                isError -> Triple(UiKit.DANGER_BG, UiKit.DANGER_FG, UiKit.DANGER_FG)
+                isLoading -> Triple(UiKit.ACCENT_SOFT, UiKit.ACCENT_PRIMARY, UiKit.ACCENT_PRIMARY)
+                else -> Triple(UiKit.SUCCESS_BG, UiKit.SUCCESS_FG, UiKit.SUCCESS_BORDER)
+            }
+            apiTestStatusTv.setTextColor(fg)
+            apiTestStatusTv.background = UiKit.skeuoWellDrawable(this, bg, 10f, stroke)
+        }
+
+        fun syncBadgeFromSaved() {
+            val saved = aiClient.loadConfig()
+            aiStatusBadge.text = if (saved.isCloudConfigured) "● Configured" else "● Offline Mode"
+            aiStatusBadge.setTextColor(if (saved.isCloudConfigured) UiKit.SUCCESS_FG else UiKit.WARNING_FG)
+            aiStatusBadge.background = UiKit.skeuoWellDrawable(
+                this,
+                if (saved.isCloudConfigured) UiKit.SUCCESS_BG else UiKit.WARNING_BG,
+                999f,
+                if (saved.isCloudConfigured) UiKit.SUCCESS_BORDER else UiKit.BORDER_SUBTLE
+            )
+        }
+
+        val btnRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                topMargin = (4 * dp).toInt()
+            }
+        }
+        val saveBtn = UiKit.createPillButton(this, "Save API Config", filled = true) {
+            val url = endpointInput.text?.toString()?.trim().orEmpty()
+            val model = modelInput.text?.toString()?.trim().orEmpty()
+            val key = apiKeyInput.text?.toString()?.trim().orEmpty()
+            aiClient.saveConfig(selectedProvider, url, model, key)
+            syncBadgeFromSaved()
+            if (selectedProvider == AiWriterClient.Provider.OFFLINE_ONLY) {
+                updateStatusBanner("Saved: Offline Proofread/Rewrite mode active.")
+            } else if (key.isBlank()) {
+                updateStatusBanner("Saved without API key — cloud generation requires an API key.", isError = true)
+            } else {
+                updateStatusBanner("Saved ${selectedProvider.displayName} ($model) locally.")
+            }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = (6 * dp).toInt()
+            }
+        }
+        val testBtn = UiKit.createPillButton(this, "Test Connection", filled = false) {
+            val url = endpointInput.text?.toString()?.trim().orEmpty()
+            val model = modelInput.text?.toString()?.trim().orEmpty()
+            val key = apiKeyInput.text?.toString()?.trim().orEmpty()
+            val previewCfg = AiWriterClient.AiConfig(selectedProvider, url, model, key)
+            updateStatusBanner("⏳ Testing ${selectedProvider.displayName} connection…", isLoading = true)
+            val started = aiClient.testConnectionAsync(previewCfg) { outcome ->
+                when (outcome) {
+                    is AiWriterClient.AiOutcome.Success -> {
+                        aiClient.saveConfig(selectedProvider, url, model, key)
+                        syncBadgeFromSaved()
+                        updateStatusBanner("✓ Connected (${outcome.engineLabel}): ${outcome.text.take(40)}")
+                    }
+                    is AiWriterClient.AiOutcome.Error -> {
+                        updateStatusBanner("⚠ ${outcome.message}", isError = true)
+                    }
+                }
+            }
+            if (!started) {
+                updateStatusBanner("Test already in progress…", isLoading = true)
+            }
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        btnRow.addView(saveBtn)
+        btnRow.addView(testBtn)
+
+        card.addView(apiTestStatusTv)
+        card.addView(btnRow)
+        refreshProviderUi(updateDefaults = false)
+        return card
     }
 
     private fun buildCardTitleRow(
@@ -206,7 +528,7 @@ class WritingToolsActivity : AppCompatActivity() {
                 text = icon
                 textSize = 18f
                 gravity = Gravity.CENTER
-                background = UiKit.roundedDrawable(this@WritingToolsActivity, UiKit.ACCENT_AI_SOFT, 12f)
+                background = UiKit.skeuoIconWellDrawable(this@WritingToolsActivity, UiKit.ACCENT_AI_SOFT, 12f)
                 val sz = (38 * dp).toInt()
                 layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (12 * dp).toInt() }
             }
@@ -249,7 +571,7 @@ class WritingToolsActivity : AppCompatActivity() {
         val dp = resources.displayMetrics.density
         val box = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@WritingToolsActivity, UiKit.SURFACE_INPUT, 14f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoWellDrawable(this@WritingToolsActivity, UiKit.SURFACE_INPUT, 14f, UiKit.BORDER_SUBTLE)
             setPadding((12 * dp).toInt(), (10 * dp).toInt(), (12 * dp).toInt(), (12 * dp).toInt())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = (10 * dp).toInt()
@@ -282,7 +604,7 @@ class WritingToolsActivity : AppCompatActivity() {
 
         val rawCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@WritingToolsActivity, UiKit.SURFACE_CARD, 10f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoCardDrawable(this@WritingToolsActivity, UiKit.SURFACE_CARD, 10f, UiKit.BORDER_SUBTLE, 1.5f)
             setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -313,7 +635,7 @@ class WritingToolsActivity : AppCompatActivity() {
 
         val procCard = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@WritingToolsActivity, UiKit.SURFACE_CARD, 10f, UiKit.ACCENT_PRIMARY, 1f)
+            background = UiKit.skeuoCardDrawable(this@WritingToolsActivity, UiKit.SURFACE_CARD, 10f, UiKit.ACCENT_PRIMARY, 1.5f)
             setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
@@ -367,12 +689,11 @@ class WritingToolsActivity : AppCompatActivity() {
                 btn.text = if (active) "✓  ${style.displayName}" else style.displayName
                 btn.setTextColor(if (active) Color.WHITE else UiKit.TEXT_SECONDARY)
                 btn.typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-                btn.background = UiKit.roundedDrawable(
+                btn.background = UiKit.skeuoButtonDrawable(
                     this,
-                    if (active) UiKit.ACCENT_AI else UiKit.SURFACE_INPUT,
+                    if (active) UiKit.ACCENT_AI else UiKit.SURFACE_ELEVATED,
                     12f,
-                    if (active) null else UiKit.BORDER_SUBTLE,
-                    1f
+                    if (active) UiKit.ACCENT_AI else UiKit.BORDER_SUBTLE
                 )
             }
         }

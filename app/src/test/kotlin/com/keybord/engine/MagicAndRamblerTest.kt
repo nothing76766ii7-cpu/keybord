@@ -58,7 +58,7 @@ class MagicAndRamblerTest {
     }
 
     @Test
-    fun testStyleRewriteAllSixStylesProduceValidOutput() {
+    fun testStyleRewriteAllStylesIncludingProfessionalAndFriendlyProduceValidOutput() {
         val engine = StyleRewriteEngine()
         val sample = "hey I can't come to the meeting today"
         for (style in WritingStyle.values()) {
@@ -68,6 +68,11 @@ class MagicAndRamblerTest {
         }
         val formal = engine.transformStyle("i won't make it", WritingStyle.FORMAL)
         assertTrue(formal.text.contains("will not", ignoreCase = true))
+
+        val professional = engine.transformStyle("hey gonna check it asap", WritingStyle.PROFESSIONAL)
+        assertTrue(professional.text.isNotBlank())
+        val friendly = engine.transformStyle("please let me know", WritingStyle.FRIENDLY)
+        assertTrue(friendly.text.isNotBlank())
     }
 
     @Test

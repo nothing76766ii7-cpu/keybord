@@ -7,8 +7,8 @@
     <uses-permission android:name="android.permission.READ_USER_DICTIONARY" />
     <uses-permission android:name="android.permission.WRITE_USER_DICTIONARY" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
-
-    <!-- ZERO INTERNET PERMISSION (Deliberate Trust Signal) -->
+    <!-- Used only when the user configures a Bring-Your-Own-Key (BYOK) AI endpoint in Writing Tools -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="true"

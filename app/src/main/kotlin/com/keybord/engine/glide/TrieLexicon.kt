@@ -24,6 +24,7 @@ class TrieLexicon {
     val root = Node()
     val endpointBuckets = HashMap<Pair<Char, Char>, MutableList<BucketEntry>>()
     private val wordFrequencies = HashMap<String, Float>()
+    private val correctionBuckets = HashMap<Pair<Int, Char>, MutableList<String>>()
     var wordCount = 0
         private set
     var maxFrequency = 1000f
@@ -34,6 +35,7 @@ class TrieLexicon {
      * Indexes over ASCII alphabetic key characters so apostrophe contractions (e.g. don't, I'm)
      * are natively swipeable without needing to lift onto an apostrophe key.
      */
+    @Synchronized
     fun insert(word: String, frequency: Float = 1.0f) {
         if (word.isBlank()) return
         val cleanWord = word.trim().lowercase()
@@ -74,14 +76,18 @@ class TrieLexicon {
                 }
             }
         }
-        wordFrequencies[display] = maxOf(wordFrequencies[display] ?: 0f, frequency)
+        val prevFreq = wordFrequencies[display]
+        wordFrequencies[display] = maxOf(prevFreq ?: 0f, frequency)
         wordFrequencies[cleanWord] = maxOf(wordFrequencies[cleanWord] ?: 0f, frequency)
+        if (prevFreq == null && !display.contains('\'') && display.length >= 2 && display[0] in 'a'..'z') {
+            correctionBuckets.getOrPut(display.length to display[0]) { ArrayList() }.add(display)
+        }
 
         current.isWord = true
-        val prevFreq = current.frequency
-        current.frequency = maxOf(prevFreq, frequency)
+        val prevNodeFreq = current.frequency
+        current.frequency = maxOf(prevNodeFreq, frequency)
         maxFrequency = maxOf(maxFrequency, current.frequency)
-        if (isNew || frequency >= prevFreq) {
+        if (isNew || frequency >= prevNodeFreq) {
             current.word = display
         }
     }
@@ -89,6 +95,7 @@ class TrieLexicon {
     /**
      * Checks if a word or contraction exists in the dictionary.
      */
+    @Synchronized
     fun contains(word: String): Boolean {
         val clean = word.trim().lowercase()
         if (wordFrequencies.containsKey(clean) || wordFrequencies.containsKey(canonicalizeDisplayWord(clean))) {
@@ -105,6 +112,7 @@ class TrieLexicon {
     /**
      * Retrieves the unigram frequency of a word or contraction (or 0 if not present).
      */
+    @Synchronized
     fun getFrequency(word: String): Float {
         val clean = word.trim().lowercase()
         wordFrequencies[canonicalizeDisplayWord(clean)]?.let { return it }
@@ -117,6 +125,7 @@ class TrieLexicon {
         return if (current.isWord) current.frequency else 0f
     }
 
+    @Synchronized
     fun clear() {
         root.children.clear()
         root.isWord = false
@@ -125,6 +134,7 @@ class TrieLexicon {
         root.word = null
         endpointBuckets.clear()
         wordFrequencies.clear()
+        correctionBuckets.clear()
         wordCount = 0
         maxFrequency = 1000f
     }
@@ -132,6 +142,7 @@ class TrieLexicon {
     /**
      * Returns top-frequency prefix completions from the static dictionary + synced personal/learned words.
      */
+    @Synchronized
     fun searchPrefix(prefix: String, limit: Int = 5): List<Pair<String, Float>> {
         val clean = prefix.trim().lowercase().filter { it in 'a'..'z' }
         if (clean.isEmpty()) return emptyList()
@@ -162,10 +173,11 @@ class TrieLexicon {
     }
 
     /**
-     * Fast edit-distance <= 1 spell correction (substitution, insertion, deletion, adjacent transposition)
-     * plus common English & Hinglish shorthand typo map.
+     * Fast bucketed edit-distance <= 1 spell correction (substitution, insertion, deletion, adjacent transposition)
+     * plus common English & Hinglish shorthand typo map. Never alters known English/Hinglish words.
      */
-    fun findBestCorrection(rawWord: String): String? {
+    @Synchronized
+    fun findBestCorrection(rawWord: String, hinglishEnabled: Boolean = true): String? {
         val lower = rawWord.trim().lowercase()
         if (lower.length < 2 || contains(lower)) return null
         if (!lower.all { it in 'a'..'z' }) return null
@@ -174,30 +186,49 @@ class TrieLexicon {
             if (contains(mapped)) return preserveInputCase(rawWord, mapped)
         }
 
+        // Preserve plausible Romanized Hindi / Hinglish phonetics rather than forcing English substitutions
+        if (hinglishEnabled && isLikelyIntentionalHinglish(lower)) {
+            return null
+        }
+
         val targetLen = lower.length
         var bestWord: String? = null
         var bestScore = -1f
         val c0 = lower[0]
         val c1 = if (lower.length > 1) lower[1] else c0
+        val startChars = if (c1 != c0) charArrayOf(c0, c1) else charArrayOf(c0)
 
-        for ((candidate, freq) in wordFrequencies) {
-            if (candidate.contains('\'')) continue
-            val candLen = candidate.length
-            if (candLen < 2 || kotlin.math.abs(candLen - targetLen) > 1) continue
-            val firstMatch = candidate[0] == c0 || candidate[0] == c1 || (candLen > 1 && candidate[1] == c0)
-            if (!firstMatch) continue
-            if (freq < 250f) continue
+        for (len in (targetLen - 1).coerceAtLeast(2)..(targetLen + 1)) {
+            for (sc in startChars) {
+                val bucket = correctionBuckets[len to sc] ?: continue
+                var checked = 0
+                for (candidate in bucket) {
+                    if (checked++ > 220) break
+                    val freq = wordFrequencies[candidate] ?: continue
+                    if (freq < 250f) continue
 
-            if (isOneEditAway(lower, candidate)) {
-                val boost = if (candidate[0] == c0) 1.35f else 1.0f
-                val score = freq * boost
-                if (score > bestScore) {
-                    bestScore = score
-                    bestWord = candidate
+                    if (isOneEditAway(lower, candidate)) {
+                        val boost = if (candidate[0] == c0) 1.35f else 1.0f
+                        val score = freq * boost
+                        if (score > bestScore) {
+                            bestScore = score
+                            bestWord = candidate
+                        }
+                    }
                 }
             }
         }
         return bestWord?.let { preserveInputCase(rawWord, it) }
+    }
+
+    fun isLikelyIntentionalHinglish(word: String): Boolean {
+        val lower = word.trim().lowercase()
+        if (HINGLISH_PROTECTED.contains(lower)) return true
+        // Common Latinized Hindi long vowels & unambiguous Hinglish endings
+        if (lower.contains("aa") || lower.contains("ee") || lower.contains("oo") || lower.contains("ii")) return true
+        val suffixes = arrayOf("wala", "wali", "wale", "mein", "haan", "nhi", "kya", "hoon")
+        if (lower.length >= 4 && suffixes.any { lower.endsWith(it) }) return true
+        return false
     }
 
     private fun isOneEditAway(a: String, b: String): Boolean {
@@ -252,6 +283,13 @@ class TrieLexicon {
             "thk" to "theek", "haann" to "haan", "achaa" to "achha"
         )
 
+        private val HINGLISH_PROTECTED = setOf(
+            "kal", "aaj", "par", "hai", "hain", "aana", "jaana", "baad", "mein", "mujhe",
+            "pasand", "bahut", "theek", "thik", "accha", "achha", "kya", "kyun", "nahi",
+            "haan", "bhai", "yaar", "dost", "tujhe", "humein", "kuch", "sab", "yahan",
+            "wahan", "abhi", "phir", "lekin", "magar", "kyunki", "matlab", "bilkul"
+        )
+
         private val HINGLISH_FALLBACK = mapOf(
             "hai" to 920f, "hain" to 905f, "kya" to 925f, "kyun" to 880f, "kyu" to 870f,
             "nahi" to 920f, "nhi" to 880f, "haan" to 915f, "bhai" to 920f, "yaar" to 915f,
@@ -265,7 +303,8 @@ class TrieLexicon {
             "dost" to 895f, "zindagi" to 895f, "khush" to 890f, "matlab" to 905f, "bilkul" to 905f,
             "zaroor" to 895f, "jaldi" to 900f, "thoda" to 895f, "zyada" to 895f, "sahi" to 905f,
             "galat" to 895f, "chahiye" to 900f, "mera" to 905f, "meri" to 900f, "tera" to 895f,
-            "apna" to 900f, "saath" to 895f, "hamesha" to 895f, "milte" to 895f, "batao" to 895f
+            "apna" to 900f, "saath" to 895f, "hamesha" to 895f, "milte" to 895f, "batao" to 895f,
+            "mujhe" to 920f, "pasand" to 905f, "par" to 895f, "aana" to 885f, "baad" to 895f
         )
 
         private val NEXT_WORD_HINTS = mapOf(
@@ -273,11 +312,17 @@ class TrieLexicon {
             "theek" to listOf("hai", "hoon", "tha"),
             "thik" to listOf("hai", "hoon", "tha"),
             "koi" to listOf("baat", "nahi", "kuch"),
-            "bahut" to listOf("achha", "badiya", "zyada"),
+            "bahut" to listOf("pasand", "achha", "badiya"),
+            "pasand" to listOf("hai", "aaya", "tha"),
+            "baad" to listOf("mein", "aana", "milte"),
+            "mujhe" to listOf("this", "bahut", "bhi"),
             "sab" to listOf("theek", "badhiya", "kuch"),
             "kahan" to listOf("ho", "hai", "ja"),
             "kaise" to listOf("ho", "hain", "hai"),
-            "kal" to listOf("milte", "subah", "raat"),
+            "kal" to listOf("meeting", "milte", "subah"),
+            "aaj" to listOf("weather", "kya", "ka"),
+            "time" to listOf("par", "hai", "pe"),
+            "par" to listOf("aana", "hai", "milte"),
             "chalo" to listOf("theek", "phir", "ghar"),
             "bhai" to listOf("kya", "kaise", "yaar"),
             "yaar" to listOf("kya", "chal", "bhai"),
@@ -289,7 +334,11 @@ class TrieLexicon {
             "thank" to listOf("you", "god", "you!"),
             "see" to listOf("you", "the", "that"),
             "how" to listOf("are", "about", "is"),
-            "i" to listOf("am", "have", "will"),
+            "can" to listOf("you", "help", "we"),
+            "help" to listOf("me", "you", "with"),
+            "will" to listOf("call", "be", "see"),
+            "call" to listOf("you", "me", "back"),
+            "i" to listOf("will", "am", "have"),
             "i'm" to listOf("good", "theek", "here")
         )
 

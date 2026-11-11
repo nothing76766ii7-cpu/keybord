@@ -119,7 +119,7 @@ class KeyboardLayoutCustomizeActivity : Activity() {
         val dp = resources.displayMetrics.density
         val card = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.SURFACE_CARD, 18f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoCardDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.SURFACE_CARD, 18f, UiKit.BORDER_SUBTLE, 2.5f)
             clipChildren = true
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
@@ -143,9 +143,9 @@ class KeyboardLayoutCustomizeActivity : Activity() {
             text = "Clear"
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(UiKit.ACCENT_PRIMARY)
-            background = UiKit.roundedDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.ACCENT_SOFT, 8f)
-            setPadding((8 * dp).toInt(), (3 * dp).toInt(), (8 * dp).toInt(), (3 * dp).toInt())
+            setTextColor(UiKit.TEXT_PRIMARY)
+            background = UiKit.skeuoButtonDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.SURFACE_ELEVATED, 8f, UiKit.BORDER_SUBTLE)
+            setPadding((9 * dp).toInt(), (4 * dp).toInt(), (9 * dp).toInt(), (4 * dp).toInt())
             setOnClickListener {
                 sandboxText.clear()
                 sandboxCursor = 0
@@ -160,7 +160,7 @@ class KeyboardLayoutCustomizeActivity : Activity() {
             textSize = 14f
             setTextColor(UiKit.TEXT_PRIMARY)
             setSingleLine(true)
-            background = UiKit.roundedDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.SURFACE_INPUT, 10f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoWellDrawable(this@KeyboardLayoutCustomizeActivity, UiKit.SURFACE_INPUT, 10f, UiKit.BORDER_SUBTLE)
             setPadding((10 * dp).toInt(), (6 * dp).toInt(), (10 * dp).toInt(), (6 * dp).toInt())
             layoutParams = LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,

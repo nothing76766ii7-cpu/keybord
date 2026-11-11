@@ -8,7 +8,18 @@ class ThemeEngineTest {
     @Test
     fun testAllBuiltInAndExtractedThemesExistAndValid() {
         assertEquals("PRD requires 10 core launch themes", 10, BuiltInThemes.CORE_BUILT_IN.size)
+        assertEquals("Prompt requires 6 skeuomorphic material themes", 6, BuiltInThemes.SKEUOMORPHIC_THEMES.size)
         assertTrue("Extracted theme collection should be populated", BuiltInThemes.EXTRACTED_THEMES.size >= 40)
+
+        val expectedMaterialNames = setOf(
+            "Dark Graphite",
+            "Black Glass",
+            "Soft White Ceramic",
+            "Brushed Metal",
+            "Premium Leather",
+            "Classic Mechanical"
+        )
+        assertEquals(expectedMaterialNames, BuiltInThemes.SKEUOMORPHIC_THEMES.map { it.name }.toSet())
 
         val themes = BuiltInThemes.ALL_BUILT_IN
         val uniqueIds = themes.map { it.id }.toSet()
@@ -36,12 +47,25 @@ class ThemeEngineTest {
 
     @Test
     fun testThemeJsonRoundTrip() {
-        for (original in listOf(BuiltInThemes.MECH_GLOW, BuiltInThemes.AURORA_GLOW_FLOW, BuiltInThemes.RIPPLE_DARK, BuiltInThemes.CYBER_CYAN)) {
+        val sampleThemes = listOf(
+            BuiltInThemes.SKEUO_DARK_GRAPHITE,
+            BuiltInThemes.SKEUO_BLACK_GLASS,
+            BuiltInThemes.SKEUO_WHITE_CERAMIC,
+            BuiltInThemes.SKEUO_BRUSHED_METAL,
+            BuiltInThemes.SKEUO_PREMIUM_LEATHER,
+            BuiltInThemes.SKEUO_CLASSIC_MECHANICAL,
+            BuiltInThemes.MECH_GLOW,
+            BuiltInThemes.AURORA_GLOW_FLOW,
+            BuiltInThemes.RIPPLE_DARK,
+            BuiltInThemes.CYBER_CYAN
+        )
+        for (original in sampleThemes) {
             val json = ThemeSerializer.toJson(original)
             assertNotNull(json)
             assertTrue(json.contains("\"schemaVersion\": 1"))
             assertTrue(json.contains("\"id\": \"${original.id}\""))
             assertTrue(json.contains("\"effectStyle\": \"${original.effectStyle.name}\""))
+            assertTrue(json.contains("\"materialFinish\": \"${original.materialFinish.name}\""))
 
             val restored = ThemeSerializer.fromJson(json)
             assertEquals(original.id, restored.id)
@@ -52,6 +76,7 @@ class ThemeEngineTest {
             assertEquals(original.keyLabelFont, restored.keyLabelFont)
             assertEquals(original.effectStyle, restored.effectStyle)
             assertEquals(original.category, restored.category)
+            assertEquals(original.materialFinish, restored.materialFinish)
             assertNotNull(restored.functionalKeyColor)
             assertNotNull(restored.accentKeyColor)
         }
@@ -75,6 +100,7 @@ class ThemeEngineTest {
         assertNull(parsed.functionalKeyColor)
         assertNull(parsed.accentKeyColor)
         assertEquals(ThemeCategory.DARK, parsed.category)
+        assertEquals(MaterialFinish.MATTE, parsed.materialFinish)
     }
 
     @Test(expected = ThemeValidationException::class)

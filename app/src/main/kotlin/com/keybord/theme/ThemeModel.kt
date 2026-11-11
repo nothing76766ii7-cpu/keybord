@@ -75,10 +75,24 @@ enum class EffectStyle(val displayName: String, val badge: String) {
 }
 
 /**
+ * Physical surface finish rendered across keycaps, housing decks, and settings panels.
+ */
+enum class MaterialFinish(val displayName: String) {
+    MATTE("Matte Tactile"),
+    DARK_GRAPHITE("Dark Graphite"),
+    BLACK_GLASS("Black Glass"),
+    WHITE_CERAMIC("Soft White Ceramic"),
+    BRUSHED_METAL("Brushed Metal"),
+    LEATHER("Premium Leather"),
+    MECHANICAL("Classic Mechanical")
+}
+
+/**
  * Gallery grouping categories for built-in and extracted themes.
  */
 enum class ThemeCategory(val label: String) {
     ALL("All"),
+    SKEUOMORPHIC("Materials"),
     EFFECTS("Effects"),
     CYBER("Cyber"),
     GRADIENTS("Gradients"),
@@ -157,7 +171,8 @@ data class ThemeModel(
     val accentKeyTextColor: Int? = null,
     val effectStyle: EffectStyle = EffectStyle.NONE,
     val effectColors: List<Int> = emptyList(),
-    val category: ThemeCategory = ThemeCategory.DARK
+    val category: ThemeCategory = ThemeCategory.DARK,
+    val materialFinish: MaterialFinish = MaterialFinish.MATTE
 ) {
     fun copyWithId(newId: String, newName: String): ThemeModel {
         return this.copy(id = newId, name = newName, isBuiltIn = false)

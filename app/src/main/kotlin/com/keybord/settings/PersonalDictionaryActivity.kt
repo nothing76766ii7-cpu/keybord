@@ -167,7 +167,7 @@ class PersonalDictionaryActivity : AppCompatActivity() {
             val row = LinearLayout(parent.context).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = UiKit.roundedDrawable(parent.context, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE, 1f)
+                background = UiKit.skeuoCardDrawable(parent.context, UiKit.SURFACE_CARD, 14f, UiKit.BORDER_SUBTLE, 2f)
                 layoutParams = MarginLayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     bottomMargin = (8 * dp).toInt()
                 }

@@ -39,7 +39,7 @@ class EmojiPanelView @JvmOverloads constructor(
 
     data class EmojiItem(val emoji: String, val keywords: String, val category: String)
 
-    var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
+    var theme: ThemeModel = BuiltInThemes.SKEUO_DARK_GRAPHITE
         set(value) {
             field = value
             applyTheme()
@@ -303,18 +303,18 @@ class EmojiPanelView @JvmOverloads constructor(
             height = totalHeightPx
         }
 
-        val cardBg = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
+        val wellBg = KeyboardEffectEngine.compositeOver(theme.suggestionStripBgColor, bg)
         val funcBg = KeyboardEffectEngine.compositeOver(theme.functionalKeyColor ?: theme.keyFaceColor.primaryColor, bg)
-        searchBox.background = UiKit.roundedDrawable(context, cardBg, 12f, theme.keyBorderColor, 1f)
+        searchBox.background = UiKit.skeuoWellDrawable(context, wellBg, 12f, theme.keyBorderColor)
         searchInput.setTextColor(theme.keyLabelColorPrimary)
         searchInput.setHintTextColor(theme.keyLabelColorSecondary)
         searchClearBtn.setTextColor(theme.keyLabelColorSecondary)
         emptyView.setTextColor(theme.keyLabelColorSecondary)
         categoryTitleTv.setTextColor(theme.keyLabelColorSecondary)
 
-        abcBtn.background = UiKit.roundedDrawable(context, funcBg, 10f, theme.keyBorderColor, 1f)
+        abcBtn.background = UiKit.skeuoButtonDrawable(context, funcBg, 10f, theme.keyBorderColor)
         abcBtn.setTextColor(theme.keyLabelColorPrimary)
-        backspaceBtn.background = UiKit.roundedDrawable(context, funcBg, 10f, theme.keyBorderColor, 1f)
+        backspaceBtn.background = UiKit.skeuoButtonDrawable(context, funcBg, 10f, theme.keyBorderColor)
         backspaceBtn.setTextColor(theme.keyLabelColorPrimary)
 
         if (::tabRow.isInitialized) {

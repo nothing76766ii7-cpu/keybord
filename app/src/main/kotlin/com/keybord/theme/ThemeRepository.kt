@@ -26,8 +26,8 @@ class ThemeRepository(private val context: Context) {
      * Retrieves the current active ThemeModel.
      */
     fun getActiveTheme(): ThemeModel {
-        val activeId = prefs.getString("active_theme_id", BuiltInThemes.MATERIAL_MIDNIGHT.id) ?: BuiltInThemes.MATERIAL_MIDNIGHT.id
-        return getThemeById(activeId) ?: BuiltInThemes.MATERIAL_MIDNIGHT
+        val activeId = prefs.getString("active_theme_id", BuiltInThemes.SKEUO_DARK_GRAPHITE.id) ?: BuiltInThemes.SKEUO_DARK_GRAPHITE.id
+        return getThemeById(activeId) ?: BuiltInThemes.SKEUO_DARK_GRAPHITE
     }
 
     /**

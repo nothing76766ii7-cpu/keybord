@@ -71,13 +71,13 @@ class OnboardingActivity : AppCompatActivity() {
             typeface = Typeface.DEFAULT_BOLD
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
-        val versionPill = TextView(this).apply {
-            text = "v1.1.9"
-            textSize = 11.5f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(UiKit.ACCENT_PRIMARY)
-            background = UiKit.roundedDrawable(this@OnboardingActivity, UiKit.ACCENT_SOFT, 10f)
-            setPadding((9 * dp).toInt(), (4 * dp).toInt(), (9 * dp).toInt(), (4 * dp).toInt())
+        val versionPill = UiKit.createBadgePill(
+            this,
+            "v1.2.0",
+            UiKit.SURFACE_INPUT,
+            UiKit.ACCENT_PRIMARY,
+            UiKit.ACCENT_PRIMARY
+        ).apply {
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 marginEnd = (10 * dp).toInt()
             }
@@ -87,7 +87,7 @@ class OnboardingActivity : AppCompatActivity() {
             setTextColor(UiKit.TEXT_SECONDARY)
             textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
-            background = UiKit.roundedDrawable(this@OnboardingActivity, UiKit.SURFACE_CARD, 10f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoButtonDrawable(this@OnboardingActivity, UiKit.SURFACE_ELEVATED, 10f, UiKit.BORDER_SUBTLE)
             setPadding((10 * dp).toInt(), (6 * dp).toInt(), (10 * dp).toInt(), (6 * dp).toInt())
             setOnClickListener { finishOnboarding() }
         }

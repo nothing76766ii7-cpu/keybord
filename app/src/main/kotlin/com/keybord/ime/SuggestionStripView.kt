@@ -1,10 +1,8 @@
 package com.keybord.ime
 
-import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
-import android.graphics.drawable.GradientDrawable
 import android.util.AttributeSet
 import android.view.Gravity
 import android.view.View
@@ -16,16 +14,17 @@ import android.widget.TextView
 import com.keyboard.engine.magicwrite.WritingStyle
 import com.keybord.clipboard.ClipboardItem
 import com.keybord.theme.BuiltInThemes
+import com.keybord.theme.KeyboardEffectEngine
 import com.keybord.theme.ThemeModel
 import com.keybord.ui.UiKit
 
 /**
- * Stitch Obsidian Tactile / Clean Porcelain IME Chrome:
+ * Tactile Skeuomorphic Suggestion Strip & Quick Toolbar:
  * - Row 1: Expandable recent clipboard quick-paste chips
  * - Row 2: Live Voice Rambler stream & Cleaned/Raw undo bar
- * - Row 3: Expandable Magic Writer tone/proofread ribbon
- * - Row 4: Toolbar Rail ([⊞ Tools] [📋 Clipboard] [😊 Emoji] [✨ AI] [🎙 Mic] [⚙ Settings])
- * - Row 5: Balanced 3-slot Candidate Ribbon with Stitch highlighted center primary pill
+ * - Row 3: Optional inline Magic Writer tone chips / inline Safe Candidate Forget confirm bar
+ * - Row 4: Tactile raised Toolbar Rail ([⊞] [📋] [😊] [B32] [EN+HI] [✨ AI] [🎙] [⚙])
+ * - Row 5: Recessed Candidate Well with raised primary pill and hairline dividers
  */
 class SuggestionStripView @JvmOverloads constructor(
     context: Context,
@@ -38,6 +37,7 @@ class SuggestionStripView @JvmOverloads constructor(
     private lateinit var clipboardBtn: TextView
     private lateinit var emojiBtn: TextView
     private lateinit var b32Btn: TextView
+    private lateinit var langBtn: TextView
     private lateinit var magicBtn: TextView
     private lateinit var micBtn: TextView
     private lateinit var settingsBtn: TextView
@@ -51,14 +51,21 @@ class SuggestionStripView @JvmOverloads constructor(
     private lateinit var ramblerActionBtn: TextView
     private lateinit var ramblerDismissBtn: TextView
 
-    // Magic Writer inline toolbar
+    // Safe inline candidate removal confirmation bar (never uses AlertDialog in IME Service context)
+    private lateinit var confirmDeleteBar: LinearLayout
+    private lateinit var confirmDeleteLabel: TextView
+    private var pendingDeleteWord: String? = null
+
+    // Magic Writer inline quick-action ribbon (long-press ✨ AI or programmatic)
     private lateinit var magicScrollView: HorizontalScrollView
     private lateinit var magicChipsRow: LinearLayout
     private var magicUndoChip: TextView? = null
     private var isMagicBarVisible = false
+    private var isAiWriterActive = false
     private var isEmojiActive = false
     private var isToolsActive = false
     private var isBase32Active = false
+    private var isHinglishEnabled = true
     private var isMicListening = false
     private var hasRamblerRevertChunk = false
     private var lastCandidates: List<String> = emptyList()
@@ -69,11 +76,13 @@ class SuggestionStripView @JvmOverloads constructor(
     var onClipboardIconClicked: (() -> Unit)? = null
     var onEmojiIconClicked: (() -> Unit)? = null
     var onBase32Clicked: (() -> Unit)? = null
+    var onLanguageToggleClicked: (() -> Unit)? = null
+    var onAiWriterClicked: (() -> Unit)? = null
     var onSettingsIconClicked: (() -> Unit)? = null
     var onRecentClipDismissed: ((Long) -> Unit)? = null
     var onRecentClipSelected: ((String) -> Unit)? = null
 
-    // Magic Writer callbacks
+    // Magic Writer quick inline callbacks
     var onMagicProofreadClicked: (() -> Unit)? = null
     var onMagicStyleClicked: ((WritingStyle) -> Unit)? = null
     var onMagicUndoClicked: (() -> Unit)? = null
@@ -83,7 +92,7 @@ class SuggestionStripView @JvmOverloads constructor(
     var onRamblerStopClicked: (() -> Unit)? = null
     var onRamblerToggleRawClicked: (() -> Unit)? = null
 
-    var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
+    var theme: ThemeModel = BuiltInThemes.SKEUO_DARK_GRAPHITE
         set(value) {
             field = value
             applyTheme()
@@ -146,7 +155,53 @@ class SuggestionStripView @JvmOverloads constructor(
         ramblerBarContainer.addView(ramblerDismissBtn)
         addView(ramblerBarContainer)
 
-        // Row 3: Expandable Magic Writer Horizontal Toolbar
+        // Row 2b: Safe inline candidate forget confirmation bar (replaces unsafe AlertDialog inside IME)
+        confirmDeleteBar = LinearLayout(context).apply {
+            orientation = HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            visibility = View.GONE
+            setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (36 * dp).toInt())
+        }
+        confirmDeleteLabel = TextView(context).apply {
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            setSingleLine(true)
+        }
+        val confirmYesBtn = TextView(context).apply {
+            text = "Remove"
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            background = UiKit.skeuoButtonDrawable(context, Color.parseColor("#B91C1C"), 8f)
+            setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+            layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                marginEnd = (6 * dp).toInt()
+            }
+            setOnClickListener {
+                val target = pendingDeleteWord
+                dismissDeleteConfirmation()
+                if (!target.isNullOrBlank()) {
+                    onCandidateDeleteRequested?.invoke(target)
+                }
+            }
+        }
+        val confirmNoBtn = TextView(context).apply {
+            text = "Keep"
+            textSize = 11.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(UiKit.TEXT_PRIMARY)
+            background = UiKit.skeuoButtonDrawable(context, UiKit.SURFACE_ELEVATED, 8f)
+            setPadding((10 * dp).toInt(), (4 * dp).toInt(), (10 * dp).toInt(), (4 * dp).toInt())
+            setOnClickListener { dismissDeleteConfirmation() }
+        }
+        confirmDeleteBar.addView(confirmDeleteLabel)
+        confirmDeleteBar.addView(confirmYesBtn)
+        confirmDeleteBar.addView(confirmNoBtn)
+        addView(confirmDeleteBar)
+
+        // Row 3: Quick Magic Ribbon (accessible on long-press of ✨ AI)
         magicScrollView = HorizontalScrollView(context).apply {
             isHorizontalScrollBarEnabled = false
             visibility = View.GONE
@@ -161,50 +216,71 @@ class SuggestionStripView @JvmOverloads constructor(
         magicScrollView.addView(magicChipsRow)
         addView(magicScrollView)
 
-        // Row 4: Stitch Toolbar Rail (7 crisp quick-action slots)
+        // Row 4: Skeuomorphic Toolbar Rail
         toolbarRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((6 * dp).toInt(), (2 * dp).toInt(), (6 * dp).toInt(), (2 * dp).toInt())
-            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (36 * dp).toInt())
+            setPadding((6 * dp).toInt(), (4 * dp).toInt(), (6 * dp).toInt(), (4 * dp).toInt())
+            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (38 * dp).toInt())
         }
 
-        toolsBtn = createRailButton("⊞", dp, 16.5f) { onToolsGridClicked?.invoke() }
-        clipboardBtn = createRailButton("📋", dp, 15f) { onClipboardIconClicked?.invoke() }
-        emojiBtn = createRailButton("😊", dp, 15.5f) { onEmojiIconClicked?.invoke() }
-        b32Btn = createRailButton("B32", dp, 11.5f) { onBase32Clicked?.invoke() }.apply {
+        toolsBtn = createRailButton("⊞", dp, 15f) { onToolsGridClicked?.invoke() }
+        clipboardBtn = createRailButton("📋", dp, 14f) { onClipboardIconClicked?.invoke() }
+        emojiBtn = createRailButton("😊", dp, 14.5f) { onEmojiIconClicked?.invoke() }
+        b32Btn = createRailButton("B32", dp, 10.5f) { onBase32Clicked?.invoke() }.apply {
             typeface = Typeface.MONOSPACE
-            setPadding((5 * dp).toInt(), (4 * dp).toInt(), (5 * dp).toInt(), (4 * dp).toInt())
         }
-        magicBtn = createRailButton("✨ AI", dp, 12f) { toggleMagicBar() }.apply {
+        langBtn = createRailButton("EN+HI", dp, 10.5f) { onLanguageToggleClicked?.invoke() }.apply {
             typeface = Typeface.DEFAULT_BOLD
-            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
-            layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.15f)
+            layoutParams = LayoutParams(0, (28 * dp).toInt(), 1.25f).apply {
+                marginEnd = (4 * dp).toInt()
+            }
         }
-        micBtn = createRailButton("🎙", dp, 15.5f) { onMicClicked?.invoke() }
-        settingsBtn = createRailButton("⚙", dp, 16f) { onSettingsIconClicked?.invoke() }
+        magicBtn = createRailButton("✨ AI", dp, 11.5f) {
+            if (onAiWriterClicked != null) {
+                onAiWriterClicked?.invoke()
+            } else {
+                toggleMagicBar()
+            }
+        }.apply {
+            typeface = Typeface.DEFAULT_BOLD
+            layoutParams = LayoutParams(0, (28 * dp).toInt(), 1.3f).apply {
+                marginEnd = (4 * dp).toInt()
+            }
+            setOnLongClickListener {
+                toggleMagicBar()
+                true
+            }
+        }
+        micBtn = createRailButton("🎙", dp, 14.5f) { onMicClicked?.invoke() }
+        settingsBtn = createRailButton("⚙", dp, 14.5f) { onSettingsIconClicked?.invoke() }.apply {
+            layoutParams = LayoutParams(0, (28 * dp).toInt(), 1f)
+        }
 
         toolbarRow.addView(toolsBtn)
         toolbarRow.addView(clipboardBtn)
         toolbarRow.addView(emojiBtn)
         toolbarRow.addView(b32Btn)
+        toolbarRow.addView(langBtn)
         toolbarRow.addView(magicBtn)
         toolbarRow.addView(micBtn)
         toolbarRow.addView(settingsBtn)
         addView(toolbarRow)
 
-        // Subtle divider between toolbar & suggestion chips
+        // Recessed shadow hairline between rail & suggestion trough
         stripDivider = View(context).apply {
             layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (1 * dp).toInt().coerceAtLeast(1))
         }
         addView(stripDivider)
 
-        // Row 5: Stitch 3-slot Predictive Ribbon
+        // Row 5: Recessed Candidate Well (3-slot predictive ribbon)
         candidateContainer = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setPadding((8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
-            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (36 * dp).toInt())
+            setPadding((6 * dp).toInt(), (3 * dp).toInt(), (6 * dp).toInt(), (3 * dp).toInt())
+            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, (36 * dp).toInt()).apply {
+                setMargins((8 * dp).toInt(), (3 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt())
+            }
         }
         addView(candidateContainer)
     }
@@ -219,10 +295,31 @@ class SuggestionStripView @JvmOverloads constructor(
             text = label
             textSize = sizeSp
             gravity = Gravity.CENTER
-            setPadding((4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt(), (4 * dp).toInt())
-            layoutParams = LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f)
+            setSingleLine(true)
+            setPadding((3 * dp).toInt(), (2 * dp).toInt(), (3 * dp).toInt(), (2 * dp).toInt())
+            layoutParams = LayoutParams(0, (28 * dp).toInt(), 1f).apply {
+                marginEnd = (4 * dp).toInt()
+            }
             setOnClickListener { onClick() }
         }
+    }
+
+    fun setHinglishEnabled(enabled: Boolean) {
+        isHinglishEnabled = enabled
+        if (::langBtn.isInitialized) {
+            langBtn.text = if (enabled) "EN+HI" else "EN"
+        }
+        applyTheme()
+    }
+
+    fun setAiWriterActive(active: Boolean) {
+        isAiWriterActive = active
+        if (active) {
+            isEmojiActive = false
+            isToolsActive = false
+            isBase32Active = false
+        }
+        applyTheme()
     }
 
     fun setEmojiPanelActive(active: Boolean) {
@@ -230,6 +327,7 @@ class SuggestionStripView @JvmOverloads constructor(
         if (active) {
             isToolsActive = false
             isBase32Active = false
+            isAiWriterActive = false
         }
         applyTheme()
     }
@@ -239,6 +337,7 @@ class SuggestionStripView @JvmOverloads constructor(
         if (active) {
             isEmojiActive = false
             isBase32Active = false
+            isAiWriterActive = false
         }
         applyTheme()
     }
@@ -248,6 +347,7 @@ class SuggestionStripView @JvmOverloads constructor(
         if (active) {
             isEmojiActive = false
             isToolsActive = false
+            isAiWriterActive = false
         }
         applyTheme()
     }
@@ -348,63 +448,63 @@ class SuggestionStripView @JvmOverloads constructor(
     }
 
     private fun applyTheme() {
-        val dp = resources.displayMetrics.density
-        setBackgroundColor(theme.suggestionStripBgColor)
+        val bg = theme.suggestionStripBgColor
+        setBackgroundColor(bg)
         val textColor = theme.suggestionStripTextColor
         val secondaryColor = theme.keyLabelColorSecondary
         val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
-        val isLight = Color.luminance(theme.suggestionStripBgColor) > 0.5f
+        val isLight = Color.luminance(bg) > 0.5f
+        val capFill = KeyboardEffectEngine.compositeOver(theme.functionalKeyColor ?: theme.keyFaceColor.primaryColor, bg)
+        val wellFill = KeyboardEffectEngine.compositeOver(UiKit.shadeColor(bg, if (isLight) -0.09f else -0.25f), bg)
 
-        stripDivider.setBackgroundColor(if (isLight) Color.argb(18, 20, 23, 32) else Color.argb(18, 255, 255, 255))
+        stripDivider.setBackgroundColor(if (isLight) Color.argb(35, 15, 23, 42) else Color.argb(42, 0, 0, 0))
 
-        toolsBtn.setTextColor(if (isToolsActive) accent else secondaryColor)
-        toolsBtn.background = if (isToolsActive) {
-            UiKit.roundedDrawable(context, Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)), 8f)
-        } else {
-            null
+        // Tactile raised rail icon buttons
+        fun styleCap(btn: TextView, active: Boolean, fgDefault: Int = textColor) {
+            btn.setTextColor(if (active) Color.WHITE else fgDefault)
+            btn.background = UiKit.skeuoButtonDrawable(
+                context,
+                if (active) accent else capFill,
+                9f,
+                if (active) accent else theme.keyBorderColor
+            )
         }
-        clipboardBtn.setTextColor(textColor)
-        emojiBtn.setTextColor(if (isEmojiActive) accent else textColor)
-        emojiBtn.background = if (isEmojiActive) {
-            UiKit.roundedDrawable(context, Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)), 8f)
-        } else {
-            null
-        }
-        b32Btn.setTextColor(if (isBase32Active) accent else secondaryColor)
-        b32Btn.background = if (isBase32Active) {
-            UiKit.roundedDrawable(context, Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)), 8f)
-        } else {
-            null
+        styleCap(toolsBtn, isToolsActive, secondaryColor)
+        styleCap(clipboardBtn, false, textColor)
+        styleCap(emojiBtn, isEmojiActive, textColor)
+        styleCap(b32Btn, isBase32Active, secondaryColor)
+        styleCap(langBtn, isHinglishEnabled, textColor)
+        langBtn.text = if (isHinglishEnabled) "EN+HI" else "EN"
+        if (!isHinglishEnabled) {
+            langBtn.setTextColor(textColor)
         }
 
-        magicBtn.setTextColor(if (isMagicBarVisible) Color.WHITE else accent)
-        magicBtn.background = UiKit.roundedDrawable(
-            context,
-            if (isMagicBarVisible) accent else Color.argb(34, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            999f,
-            Color.argb(90, Color.red(accent), Color.green(accent), Color.blue(accent)),
-            1f
-        )
+        val aiColor = if (isAiWriterActive || isMagicBarVisible) UiKit.ACCENT_AI else UiKit.blendColors(capFill, UiKit.ACCENT_AI, 0.35f)
+        magicBtn.setTextColor(if (isAiWriterActive || isMagicBarVisible || !isLight) Color.WHITE else UiKit.ACCENT_AI)
+        magicBtn.background = UiKit.skeuoButtonDrawable(context, aiColor, 10f, UiKit.ACCENT_AI)
 
-        micBtn.setTextColor(if (isMicListening) Color.parseColor("#FF5252") else textColor)
-        settingsBtn.setTextColor(secondaryColor)
+        styleCap(micBtn, isMicListening, textColor)
+        if (isMicListening) {
+            micBtn.background = UiKit.skeuoButtonDrawable(context, Color.parseColor("#DC2626"), 9f)
+        }
+        styleCap(settingsBtn, false, secondaryColor)
 
-        val barTint = Color.argb(32, Color.red(accent), Color.green(accent), Color.blue(accent))
+        // Recessed candidate trough well
+        candidateContainer.background = UiKit.skeuoWellDrawable(context, wellFill, 11f, theme.keyBorderColor)
+
+        val barTint = KeyboardEffectEngine.compositeOver(Color.argb(40, Color.red(accent), Color.green(accent), Color.blue(accent)), bg)
         ramblerBarContainer.setBackgroundColor(barTint)
         ramblerStatusTv.setTextColor(textColor)
         ramblerDismissBtn.setTextColor(textColor)
-
-        val chipBg = GradientDrawable().apply {
-            cornerRadius = 14 * dp
-            setColor(Color.argb(42, Color.red(accent), Color.green(accent), Color.blue(accent)))
-            setStroke((1 * dp).toInt().coerceAtLeast(1), Color.argb(100, Color.red(accent), Color.green(accent), Color.blue(accent)))
-        }
-        ramblerActionBtn.background = chipBg.constantState?.newDrawable()?.mutate() ?: chipBg
+        ramblerActionBtn.background = UiKit.skeuoButtonDrawable(context, capFill, 8f, accent)
         ramblerActionBtn.setTextColor(textColor)
+
+        confirmDeleteBar.setBackgroundColor(barTint)
+        confirmDeleteLabel.setTextColor(textColor)
 
         for (i in 0 until magicChipsRow.childCount) {
             val tv = magicChipsRow.getChildAt(i) as? TextView ?: continue
-            tv.background = chipBg.constantState?.newDrawable()?.mutate() ?: chipBg
+            tv.background = UiKit.skeuoButtonDrawable(context, capFill, 10f, theme.keyBorderColor)
             tv.setTextColor(textColor)
         }
 
@@ -414,8 +514,8 @@ class SuggestionStripView @JvmOverloads constructor(
     }
 
     /**
-     * Updates candidate predictions (up to 3 candidates) styled after Stitch 01/02
-     * with centered primary pill highlight and vertical hairline separators.
+     * Updates candidate predictions (up to 3 candidates) inside the recessed suggestion well
+     * with a raised tactile center primary pill.
      */
     fun setCandidates(words: List<String>) {
         lastCandidates = words.take(3)
@@ -430,9 +530,11 @@ class SuggestionStripView @JvmOverloads constructor(
         val textColor = theme.suggestionStripTextColor
         val secondaryColor = theme.keyLabelColorSecondary
         val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
-        val isLight = Color.luminance(theme.suggestionStripBgColor) > 0.5f
+        val bg = theme.suggestionStripBgColor
+        val isLight = Color.luminance(bg) > 0.5f
+        val raisedPillColor = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
 
-        // Place best candidate (index 0) in center slot when >= 2 candidates exist (Gboard/Stitch convention)
+        // Place best candidate (index 0) in center slot when >= 2 candidates exist
         val ordered: List<Pair<String, Boolean>> = when (topCandidates.size) {
             1 -> listOf(topCandidates[0] to true)
             2 -> listOf(topCandidates[0] to true, topCandidates[1] to false)
@@ -443,10 +545,10 @@ class SuggestionStripView @JvmOverloads constructor(
             if (idx > 0) {
                 candidateContainer.addView(
                     View(context).apply {
-                        setBackgroundColor(if (isLight) Color.argb(24, 20, 23, 32) else Color.argb(24, 255, 255, 255))
+                        setBackgroundColor(if (isLight) Color.argb(30, 15, 23, 42) else Color.argb(28, 255, 255, 255))
                         layoutParams = LayoutParams((1 * dp).toInt().coerceAtLeast(1), (16 * dp).toInt()).apply {
-                            marginStart = (2 * dp).toInt()
-                            marginEnd = (2 * dp).toInt()
+                            marginStart = (3 * dp).toInt()
+                            marginEnd = (3 * dp).toInt()
                         }
                     }
                 )
@@ -454,28 +556,22 @@ class SuggestionStripView @JvmOverloads constructor(
 
             if (isPrimary) {
                 val pillBox = FrameLayout(context).apply {
-                    background = UiKit.roundedDrawable(
-                        context,
-                        Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                        9f,
-                        Color.argb(85, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                        1f
-                    )
+                    background = UiKit.skeuoButtonDrawable(context, raisedPillColor, 9f, accent)
                     layoutParams = LayoutParams(0, (28 * dp).toInt(), 1.15f).apply {
-                        marginStart = (3 * dp).toInt()
-                        marginEnd = (3 * dp).toInt()
+                        marginStart = (2 * dp).toInt()
+                        marginEnd = (2 * dp).toInt()
                     }
                     setOnClickListener { onCandidateSelected?.invoke(word) }
                     setOnLongClickListener {
-                        confirmCandidateDeletion(word)
+                        showInlineDeleteConfirmation(word)
                         true
                     }
                 }
                 val tv = TextView(context).apply {
                     text = word
-                    textSize = 14f
+                    textSize = 13.5f
                     typeface = Typeface.DEFAULT_BOLD
-                    setTextColor(if (isLight) accent else Color.WHITE)
+                    setTextColor(textColor)
                     gravity = Gravity.CENTER
                     setSingleLine(true)
                     layoutParams = FrameLayout.LayoutParams(
@@ -485,7 +581,11 @@ class SuggestionStripView @JvmOverloads constructor(
                 }
                 val glowBar = View(context).apply {
                     background = UiKit.roundedDrawable(context, accent, 4f)
-                    layoutParams = FrameLayout.LayoutParams((22 * dp).toInt(), (2 * dp).toInt().coerceAtLeast(2), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                    layoutParams = FrameLayout.LayoutParams(
+                        (20 * dp).toInt(),
+                        (2 * dp).toInt().coerceAtLeast(2),
+                        Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    ).apply {
                         bottomMargin = (2 * dp).toInt()
                     }
                 }
@@ -494,8 +594,8 @@ class SuggestionStripView @JvmOverloads constructor(
                 candidateContainer.addView(pillBox)
             } else {
                 val tv = TextView(context).apply {
-                    text = if (idx == ordered.lastIndex && ordered.size == 3) "$word •" else word
-                    textSize = 13.5f
+                    text = word
+                    textSize = 13f
                     setTextColor(secondaryColor)
                     gravity = Gravity.CENTER
                     setSingleLine(true)
@@ -504,7 +604,7 @@ class SuggestionStripView @JvmOverloads constructor(
                     setPadding((4 * dp).toInt(), 0, (4 * dp).toInt(), 0)
                     setOnClickListener { onCandidateSelected?.invoke(word) }
                     setOnLongClickListener {
-                        confirmCandidateDeletion(word)
+                        showInlineDeleteConfirmation(word)
                         true
                     }
                 }
@@ -526,18 +626,14 @@ class SuggestionStripView @JvmOverloads constructor(
         }
 
         val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
+        val bg = theme.suggestionStripBgColor
+        val chipBg = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
         recentClipsContainer.visibility = View.VISIBLE
         for (item in items.take(3)) {
             val chip = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                background = UiKit.roundedDrawable(
-                    context,
-                    Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    10f,
-                    Color.argb(75, Color.red(accent), Color.green(accent), Color.blue(accent)),
-                    1f
-                )
+                background = UiKit.skeuoCardDrawable(context, chipBg, 10f, accent, 1.5f)
                 setPadding((9 * dp).toInt(), (3 * dp).toInt(), (5 * dp).toInt(), (3 * dp).toInt())
                 layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                     marginEnd = (6 * dp).toInt()
@@ -565,14 +661,14 @@ class SuggestionStripView @JvmOverloads constructor(
         }
     }
 
-    private fun confirmCandidateDeletion(word: String) {
-        AlertDialog.Builder(context)
-            .setTitle("Remove Learned Word")
-            .setMessage("Do you want to delete '$word' from your personal vocabulary?")
-            .setPositiveButton("Delete") { _, _ ->
-                onCandidateDeleteRequested?.invoke(word)
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+    private fun showInlineDeleteConfirmation(word: String) {
+        pendingDeleteWord = word
+        confirmDeleteLabel.text = "Forget \"$word\"?"
+        confirmDeleteBar.visibility = View.VISIBLE
+    }
+
+    private fun dismissDeleteConfirmation() {
+        pendingDeleteWord = null
+        confirmDeleteBar.visibility = View.GONE
     }
 }

@@ -44,7 +44,7 @@ class Base32PanelView @JvmOverloads constructor(
         B32_TO_HEX("B32 → Hex")
     }
 
-    var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
+    var theme: ThemeModel = BuiltInThemes.SKEUO_DARK_GRAPHITE
         set(value) {
             field = value
             applyTheme()
@@ -732,7 +732,7 @@ class Base32PanelView @JvmOverloads constructor(
             val active = (mode == activeTab)
             tv.setTextColor(if (active) Color.WHITE else theme.keyLabelColorSecondary)
             tv.typeface = if (active) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
-            tv.background = if (active) UiKit.roundedDrawable(context, accent, 9f) else null
+            tv.background = if (active) UiKit.skeuoButtonDrawable(context, accent, 9f) else null
         }
     }
 
@@ -806,7 +806,7 @@ class Base32PanelView @JvmOverloads constructor(
         val solidBg = KeyboardEffectEngine.compositeOver(theme.keyboardBackground.colorStart, Color.BLACK)
         setBackgroundColor(solidBg)
         val innerFill = theme.functionalKeyColor ?: UiKit.SURFACE_CARD
-        segRow.background = UiKit.roundedDrawable(context, innerFill, 11f, theme.keyBorderColor, 1f)
+        segRow.background = UiKit.skeuoWellDrawable(context, innerFill, 11f, theme.keyBorderColor)
         syncTabStyles()
     }
 }

@@ -287,10 +287,10 @@ class SettingsActivity : Activity() {
     private fun renderAboutScreen() {
         titleTextView.text = "About Keybord"
 
-        contentContainer.addView(createSectionHeader("Keybord v1.1.9"))
+        contentContainer.addView(createSectionHeader("Keybord v1.2.0"))
         val desc = TextView(this).apply {
             text = "The keyboard that gets out of your way.\n\n" +
-                    "• 100% On-Device: Zero internet permissions requested.\n" +
+                    "• Local Core Sandbox + Optional BYOK AI Writer.\n" +
                     "• Unlimited SQLite Clipboard with Pinned Immunity.\n" +
                     "• Clean-room Delight5 DTW Glide Typing Engine.\n" +
                     "• Katz Backoff Adaptive Vocabulary Learning.\n" +

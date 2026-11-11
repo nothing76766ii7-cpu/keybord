@@ -10,6 +10,8 @@ pub enum WritingStyle {
     Elaborate = 3,
     Emojify = 4,
     Poetic = 5,
+    Professional = 6,
+    Friendly = 7,
 }
 
 impl From<i32> for WritingStyle {
@@ -20,6 +22,8 @@ impl From<i32> for WritingStyle {
             3 => WritingStyle::Elaborate,
             4 => WritingStyle::Emojify,
             5 => WritingStyle::Poetic,
+            6 => WritingStyle::Professional,
+            7 => WritingStyle::Friendly,
             _ => WritingStyle::Formal,
         }
     }
@@ -286,6 +290,8 @@ impl StyleRewriteEngine {
             WritingStyle::Elaborate => self.elaborate(trimmed),
             WritingStyle::Emojify => self.emojify(trimmed),
             WritingStyle::Poetic => self.make_poetic(trimmed),
+            WritingStyle::Professional => self.make_professional(trimmed),
+            WritingStyle::Friendly => self.make_friendly(trimmed),
         };
 
         let follow_ups = match style {
@@ -295,6 +301,8 @@ impl StyleRewriteEngine {
             WritingStyle::Elaborate => vec!["Summarize".to_string(), "Make polite".to_string(), "Request review".to_string()],
             WritingStyle::Emojify => vec!["More emojis".to_string(), "Make casual".to_string(), "Tone down".to_string()],
             WritingStyle::Poetic => vec!["Make playful".to_string(), "Shorter verse".to_string(), "Rhyme more".to_string()],
+            WritingStyle::Professional => vec!["Add closing".to_string(), "Make shorter".to_string(), "Request feedback".to_string()],
+            WritingStyle::Friendly => vec!["Add thanks".to_string(), "Keep warm".to_string(), "Shorten".to_string()],
         };
 
         RewriteDraft {
@@ -404,6 +412,34 @@ impl StyleRewriteEngine {
     fn make_poetic(&self, text: &str) -> String {
         let base = text.trim_end_matches(['.', '!', '?']);
         format!("Beneath the sky of quiet thought, {}, as destiny softly sought.", base)
+    }
+
+    fn make_professional(&self, text: &str) -> String {
+        let formal = self.formalize(text);
+        if formal.to_lowercase().starts_with("hello") || formal.to_lowercase().starts_with("please") {
+            formal
+        } else {
+            let mut chars = formal.chars();
+            let lowered = match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_lowercase().collect::<String>() + chars.as_str(),
+            };
+            format!("Please note: {}", lowered)
+        }
+    }
+
+    fn make_friendly(&self, text: &str) -> String {
+        let mut res = text.trim().to_string();
+        if !res.to_lowercase().starts_with("hey") && !res.to_lowercase().starts_with("hi") {
+            res = format!("Hey! {}", res);
+        }
+        if res.ends_with('.') {
+            res.pop();
+            res.push('!');
+        } else if !res.ends_with('!') && !res.ends_with('?') {
+            res.push('!');
+        }
+        format!("{} 😊", res)
     }
 }
 

@@ -49,7 +49,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
 
         val activeBadge = UiKit.createBadgePill(
             this,
-            "● Active • Offline",
+            "● Active • Local Core",
             UiKit.SUCCESS_BG,
             UiKit.SUCCESS_FG,
             UiKit.SUCCESS_BORDER
@@ -73,11 +73,11 @@ class KeybordSettingsActivity : AppCompatActivity() {
             setPadding(0, 0, 0, (14 * dp).toInt())
         }
 
-        // 1. Hero Live Preview Card (Stitch 04 top card)
+        // 1. Hero Live Preview Card
         val previewCard = UiKit.createCardContainer(this, paddingDp = 14f, radiusDp = 20f, bottomMarginDp = 14f)
         val previewSurface = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = UiKit.roundedDrawable(this@KeybordSettingsActivity, UiKit.SURFACE_INPUT, 14f, UiKit.BORDER_SUBTLE, 1f)
+            background = UiKit.skeuoWellDrawable(this@KeybordSettingsActivity, UiKit.SURFACE_INPUT, 14f, UiKit.BORDER_SUBTLE)
             setPadding((6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt(), (6 * dp).toInt())
             layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 bottomMargin = (12 * dp).toInt()
@@ -101,7 +101,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
             layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
         }
         val verTag = TextView(this).apply {
-            text = "Obsidian v1.1.9"
+            text = "Skeuomorphic v1.2.0"
             textSize = 11.5f
             typeface = Typeface.MONOSPACE
             setTextColor(UiKit.TEXT_SECONDARY)
@@ -132,7 +132,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
         previewCard.addView(ctaRow)
         content.addView(previewCard)
 
-        // 2. Grouped "Preferences & Engine" Card (Stitch 04 list)
+        // 2. Grouped "Preferences & Engine" Card
         content.addView(
             TextView(this).apply {
                 text = "Preferences & Engine"
@@ -145,7 +145,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
 
         val menuCard = UiKit.createCardContainer(this, paddingDp = 12f, radiusDp = 18f, bottomMarginDp = 10f)
         menuCard.addView(
-            buildMenuRow("🎨", "#1F2D4D", "Appearance", "Theme gallery, accents & animated effects") {
+            buildMenuRow("🎨", "#1F2D4D", "Appearance", "Material finishes, accents & animated effects") {
                 startActivity(Intent(this, ThemeGalleryActivity::class.java))
             }
         )
@@ -169,7 +169,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
         )
         menuCard.addView(UiKit.createHairlineDivider(this))
         menuCard.addView(
-            buildMenuRow("✨", "#281D46", "Writing Tools", "Rambler voice cleanup & Magic Writing tones", pill = "⚡ Local AI") {
+            buildMenuRow("✨", "#281D46", "Writing Tools", "BYOK AI Writer, Rambler cleanup & Magic tones", pill = "✨ BYOK AI") {
                 startActivity(Intent(this, WritingToolsActivity::class.java))
             }
         )
@@ -181,13 +181,13 @@ class KeybordSettingsActivity : AppCompatActivity() {
         )
         menuCard.addView(UiKit.createHairlineDivider(this))
         menuCard.addView(
-            buildMenuRow("🛡", "#1D2434", "Clipboard Rules & Security", "Retention policy, AES-256 vault & password safety") {
+            buildMenuRow("🛡", "#1D2434", "Clipboard Rules & Security", "Retention policy, AES vault & password safety") {
                 startActivity(Intent(this, ClipboardSettingsActivity::class.java))
             }
         )
         menuCard.addView(UiKit.createHairlineDivider(this))
         menuCard.addView(
-            buildMenuRow("ℹ", "#1E2230", "About Keybord", "Version 1.1.9 • Zero-internet privacy & engine info") {
+            buildMenuRow("ℹ", "#1E2230", "About & Diagnostics", "Version 1.2.0 • Privacy guarantee & crash log viewer") {
                 startActivity(Intent(this, AboutActivity::class.java))
             }
         )
@@ -198,7 +198,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
             UiKit.createPrivacyFooter(
                 this,
                 "Zero Telemetry Active",
-                "Sandbox Isolation 100% • No internet permission declared"
+                "Local Core Sandbox • Optional BYOK AI Writer only"
             )
         )
 
@@ -258,7 +258,7 @@ class KeybordSettingsActivity : AppCompatActivity() {
                 text = icon
                 textSize = 18f
                 gravity = Gravity.CENTER
-                background = UiKit.roundedDrawable(this@KeybordSettingsActivity, Color.parseColor(iconBg), 12f)
+                background = UiKit.skeuoIconWellDrawable(this@KeybordSettingsActivity, Color.parseColor(iconBg), 12f)
                 val sz = (40 * dp).toInt()
                 layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (12 * dp).toInt() }
             }

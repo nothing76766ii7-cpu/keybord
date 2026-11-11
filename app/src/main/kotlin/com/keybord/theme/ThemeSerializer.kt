@@ -94,6 +94,7 @@ object ThemeSerializer {
         }
         root.put("animations", anim)
         root.put("category", theme.category.name)
+        root.put("materialFinish", theme.materialFinish.name)
 
         return root.toString(2)
     }
@@ -243,6 +244,8 @@ object ThemeSerializer {
 
         val catName = root.optString("category", "DARK")
         val category = try { ThemeCategory.valueOf(catName) } catch (e: Exception) { ThemeCategory.DARK }
+        val finishName = root.optString("materialFinish", "MATTE")
+        val materialFinish = try { MaterialFinish.valueOf(finishName) } catch (e: Exception) { MaterialFinish.MATTE }
 
         return ThemeModel(
             id = id,
@@ -277,7 +280,8 @@ object ThemeSerializer {
             accentKeyTextColor = accentKeyTextColor,
             effectStyle = effectStyle,
             effectColors = effectColors,
-            category = category
+            category = category,
+            materialFinish = materialFinish
         )
     }
 

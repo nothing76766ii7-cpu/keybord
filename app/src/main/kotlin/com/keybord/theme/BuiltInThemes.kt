@@ -756,6 +756,197 @@ object BuiltInThemes {
         "#FF0E0C0B", "#FF3D332F", midHex = "#FF342C28", isLightText = true, accentHex = "#FF6A5C53"
     )
 
+    // ==================== Skeuomorphic Physical Material Themes ====================
+
+    val SKEUO_DARK_GRAPHITE = ThemeModel(
+        id = "builtin_dark_graphite",
+        name = "Dark Graphite",
+        isBuiltIn = true,
+        keyHeightDp = 54f,
+        keyCornerRadiusDp = 9f,
+        keyGapHorizontalDp = 4f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FF2E3443"), c("#FF1E222D")),
+        keyBorderColor = c("#2CFFFFFF"),
+        keyBorderWidthDp = 1f,
+        keyPressHighlightColor = c("#364F8BFF"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FF11141B"), c("#FF191D27"), 180f),
+        suggestionStripBgColor = c("#FF151923"),
+        suggestionStripTextColor = c("#FFF1F5F9"),
+        keyLabelColorPrimary = c("#FFF1F5F9"),
+        keyLabelColorSecondary = c("#FF8B93A7"),
+        keyLabelFont = FontChoice.INTER,
+        keyLabelSizeSp = 16f,
+        trailColor = c("#FF4F8BFF"),
+        trailWidthDp = 12f,
+        trailFadeDurationMs = 340L,
+        functionalKeyColor = c("#FF1A1E28"),
+        accentKeyColor = c("#FF3B82F6"),
+        accentKeyTextColor = Color.WHITE,
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.DARK_GRAPHITE
+    )
+
+    val SKEUO_BLACK_GLASS = ThemeModel(
+        id = "builtin_black_glass",
+        name = "Black Glass",
+        isBuiltIn = true,
+        keyHeightDp = 54f,
+        keyCornerRadiusDp = 10f,
+        keyGapHorizontalDp = 4f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FF252D3D"), c("#FF11151E")),
+        keyBorderColor = c("#387DD3FC"),
+        keyBorderWidthDp = 1f,
+        keyPressHighlightColor = c("#4038BDF8"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FF06080E"), c("#FF101522"), 155f),
+        suggestionStripBgColor = c("#FF090C15"),
+        suggestionStripTextColor = c("#FFE0F2FE"),
+        keyLabelColorPrimary = c("#FFF8FAFC"),
+        keyLabelColorSecondary = c("#FF7C8CA3"),
+        keyLabelFont = FontChoice.INTER,
+        keyLabelSizeSp = 16f,
+        trailColor = c("#FF38BDF8"),
+        trailWidthDp = 11f,
+        trailFadeDurationMs = 360L,
+        functionalKeyColor = c("#FF0E131D"),
+        accentKeyColor = c("#FF0EA5E9"),
+        accentKeyTextColor = Color.WHITE,
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.BLACK_GLASS
+    )
+
+    val SKEUO_WHITE_CERAMIC = ThemeModel(
+        id = "builtin_white_ceramic",
+        name = "Soft White Ceramic",
+        isBuiltIn = true,
+        keyHeightDp = 54f,
+        keyCornerRadiusDp = 10f,
+        keyGapHorizontalDp = 4.5f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FFFFFFFF"), c("#FFECEFF4")),
+        keyBorderColor = c("#2894A3B8"),
+        keyBorderWidthDp = 1f,
+        keyPressHighlightColor = c("#200F172A"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FFE2E6EE"), c("#FFD4DAE4"), 180f),
+        suggestionStripBgColor = c("#FFE8ECF2"),
+        suggestionStripTextColor = c("#FF1E293B"),
+        keyLabelColorPrimary = c("#FF18202C"),
+        keyLabelColorSecondary = c("#FF64748B"),
+        keyLabelFont = FontChoice.INTER,
+        keyLabelSizeSp = 16f,
+        trailColor = c("#FF2563EB"),
+        trailWidthDp = 12f,
+        trailFadeDurationMs = 330L,
+        functionalKeyColor = c("#FFDDE2EC"),
+        accentKeyColor = c("#FF2563EB"),
+        accentKeyTextColor = Color.WHITE,
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.WHITE_CERAMIC
+    )
+
+    val SKEUO_BRUSHED_METAL = ThemeModel(
+        id = "builtin_brushed_metal",
+        name = "Brushed Metal",
+        isBuiltIn = true,
+        keyHeightDp = 54f,
+        keyCornerRadiusDp = 8f,
+        keyGapHorizontalDp = 4f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FF555E6F"), c("#FF333946")),
+        keyBorderColor = c("#48E2E8F0"),
+        keyBorderWidthDp = 1.1f,
+        keyPressHighlightColor = c("#38FBBF24"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FF222731"), c("#FF343B48"), c("#FF282E38"), 135f),
+        suggestionStripBgColor = c("#FF272D38"),
+        suggestionStripTextColor = c("#FFF1F5F9"),
+        keyLabelColorPrimary = c("#FFF8FAFC"),
+        keyLabelColorSecondary = c("#FFA8B2C2"),
+        keyLabelFont = FontChoice.SANS_SERIF_MEDIUM,
+        keyLabelSizeSp = 15.5f,
+        trailColor = c("#FFF59E0B"),
+        trailWidthDp = 11f,
+        trailFadeDurationMs = 340L,
+        functionalKeyColor = c("#FF2C323E"),
+        accentKeyColor = c("#FFF59E0B"),
+        accentKeyTextColor = c("#FF111827"),
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.BRUSHED_METAL
+    )
+
+    val SKEUO_PREMIUM_LEATHER = ThemeModel(
+        id = "builtin_premium_leather",
+        name = "Premium Leather",
+        isBuiltIn = true,
+        keyHeightDp = 54f,
+        keyCornerRadiusDp = 9f,
+        keyGapHorizontalDp = 4.5f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FF422E25"), c("#FF2B1D17")),
+        keyBorderColor = c("#3AF5D0A9"),
+        keyBorderWidthDp = 1f,
+        keyPressHighlightColor = c("#3CD97706"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FF1C120E"), c("#FF2A1B14"), 180f),
+        suggestionStripBgColor = c("#FF221611"),
+        suggestionStripTextColor = c("#FFF7EDE2"),
+        keyLabelColorPrimary = c("#FFFAF0E6"),
+        keyLabelColorSecondary = c("#FFC4A484"),
+        keyLabelFont = FontChoice.SERIF,
+        keyLabelSizeSp = 16f,
+        trailColor = c("#FFD97706"),
+        trailWidthDp = 12f,
+        trailFadeDurationMs = 350L,
+        functionalKeyColor = c("#FF241712"),
+        accentKeyColor = c("#FFD97706"),
+        accentKeyTextColor = Color.WHITE,
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.LEATHER
+    )
+
+    val SKEUO_CLASSIC_MECHANICAL = ThemeModel(
+        id = "builtin_classic_mechanical",
+        name = "Classic Mechanical",
+        isBuiltIn = true,
+        keyHeightDp = 55f,
+        keyCornerRadiusDp = 7f,
+        keyGapHorizontalDp = 4f,
+        keyGapVerticalDp = 6f,
+        bottomPaddingDp = 12f,
+        keyFaceColor = ColorSpec.gradient(c("#FFF7F4EC"), c("#FFE1DDD2")),
+        keyBorderColor = c("#5578766E"),
+        keyBorderWidthDp = 1.1f,
+        keyPressHighlightColor = c("#28000000"),
+        keyboardBackground = BackgroundSpec.gradient(c("#FFB7B4A9"), c("#FF9E9B90"), 180f),
+        suggestionStripBgColor = c("#FFACA99E"),
+        suggestionStripTextColor = c("#FF1E2022"),
+        keyLabelColorPrimary = c("#FF1E2022"),
+        keyLabelColorSecondary = c("#FF5C5B55"),
+        keyLabelFont = FontChoice.JETBRAINS_MONO,
+        keyLabelSizeSp = 15.5f,
+        trailColor = c("#FFD95338"),
+        trailWidthDp = 11f,
+        trailFadeDurationMs = 340L,
+        functionalKeyColor = c("#FF908E84"),
+        accentKeyColor = c("#FFD95338"),
+        accentKeyTextColor = Color.WHITE,
+        category = ThemeCategory.SKEUOMORPHIC,
+        materialFinish = MaterialFinish.MECHANICAL
+    )
+
+    val SKEUOMORPHIC_THEMES = listOf(
+        SKEUO_DARK_GRAPHITE,
+        SKEUO_BLACK_GLASS,
+        SKEUO_WHITE_CERAMIC,
+        SKEUO_BRUSHED_METAL,
+        SKEUO_PREMIUM_LEATHER,
+        SKEUO_CLASSIC_MECHANICAL
+    )
+
     val CORE_BUILT_IN = listOf(
         MATERIAL_MIDNIGHT,
         CLEAN_PORCELAIN,
@@ -831,9 +1022,9 @@ object BuiltInThemes {
         GRADIENT_CHETAK_OBSIDIAN
     )
 
-    val ALL_BUILT_IN = CORE_BUILT_IN + EXTRACTED_THEMES
+    val ALL_BUILT_IN = SKEUOMORPHIC_THEMES + CORE_BUILT_IN + EXTRACTED_THEMES
 
     fun getById(id: String): ThemeModel {
-        return ALL_BUILT_IN.find { it.id == id } ?: MATERIAL_MIDNIGHT
+        return ALL_BUILT_IN.find { it.id == id } ?: SKEUO_DARK_GRAPHITE
     }
 }

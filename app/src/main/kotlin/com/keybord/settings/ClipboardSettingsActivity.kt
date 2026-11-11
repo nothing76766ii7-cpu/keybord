@@ -45,9 +45,9 @@ class ClipboardSettingsActivity : AppCompatActivity() {
         }
         UiKit.applyEdgeToEdgePadding(root, leftDp = 16f, topDp = 14f, rightDp = 16f, bottomDp = 16f)
 
-        val aesPill = UiKit.createBadgePill(
+        val vaultPill = UiKit.createBadgePill(
             this,
-            "🔒 AES-256",
+            "🔒 Encrypted",
             UiKit.SUCCESS_BG,
             UiKit.SUCCESS_FG,
             UiKit.SUCCESS_BORDER
@@ -58,7 +58,7 @@ class ClipboardSettingsActivity : AppCompatActivity() {
                 title = "Clipboard Vault",
                 subtitle = "Offline Secure Vault • Hardware-backed local storage",
                 showBack = true,
-                trailingView = aesPill
+                trailingView = vaultPill
             )
         )
 
@@ -83,7 +83,7 @@ class ClipboardSettingsActivity : AppCompatActivity() {
                 text = "🛡"
                 textSize = 16f
                 gravity = Gravity.CENTER
-                background = UiKit.roundedDrawable(this@ClipboardSettingsActivity, UiKit.SURFACE_ELEVATED, 10f)
+                background = UiKit.skeuoIconWellDrawable(this@ClipboardSettingsActivity, UiKit.SURFACE_ELEVATED, 10f)
                 val sz = (34 * dp).toInt()
                 layoutParams = LinearLayout.LayoutParams(sz, sz).apply { marginEnd = (10 * dp).toInt() }
             }

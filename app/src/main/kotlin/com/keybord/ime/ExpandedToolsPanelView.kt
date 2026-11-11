@@ -10,14 +10,14 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.keyboard.engine.magicwrite.WritingStyle
-import com.keybord.clipboard.ClipboardItem
 import com.keybord.theme.BuiltInThemes
+import com.keybord.theme.KeyboardEffectEngine
 import com.keybord.theme.ThemeModel
 import com.keybord.ui.UiKit
 
 /**
- * Stitch Screen 03: Expanded Tools Drawer & Quick Rambler / Clipboard Card.
- * Replaces the keyboard layer cleanly on demand without leaving the active app.
+ * Tactile Skeuomorphic Expanded Tools Drawer & Quick Rambler / AI Hub.
+ * Removes the redundant AES-256 clip card and surfaces all tools with physical 3D tiles.
  */
 class ExpandedToolsPanelView @JvmOverloads constructor(
     context: Context,
@@ -25,7 +25,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : LinearLayout(context, attrs, defStyleAttr) {
 
-    var theme: ThemeModel = BuiltInThemes.MATERIAL_MIDNIGHT
+    var theme: ThemeModel = BuiltInThemes.SKEUO_DARK_GRAPHITE
         set(value) {
             field = value
             applyTheme()
@@ -45,7 +45,6 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
 
     private var isShowingRaw = false
     private var clipCount = 0
-    private var latestClip: ClipboardItem? = null
 
     var onCollapseClicked: (() -> Unit)? = null
     var onOpenClipboardClicked: (() -> Unit)? = null
@@ -60,7 +59,6 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
     var onRamblerToggleRawClicked: (() -> Unit)? = null
     var onMagicFixItClicked: (() -> Unit)? = null
     var onMagicStyleClicked: ((WritingStyle) -> Unit)? = null
-    var onPasteClipClicked: ((String) -> Unit)? = null
     var onMicClicked: (() -> Unit)? = null
 
     private lateinit var ramblerCard: LinearLayout
@@ -70,10 +68,6 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
     private lateinit var formalBtn: TextView
     private lateinit var conciseBtn: TextView
     private lateinit var gridContainer: LinearLayout
-    private lateinit var clipCard: LinearLayout
-    private lateinit var clipTitleTv: TextView
-    private lateinit var clipPreviewTv: TextView
-    private lateinit var clipPasteBtn: TextView
     private lateinit var backKeysBtn: TextView
     private lateinit var langPillTv: TextView
     private lateinit var micPillBtn: TextView
@@ -88,7 +82,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         val dp = resources.displayMetrics.density
         setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (10 * dp).toInt())
 
-        // 1. Rambler + Magic Quick Card
+        // 1. Rambler + Quick Polish Skeuomorphic Deck Card
         ramblerCard = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -102,8 +96,8 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
             text = "🎙"
             textSize = 15f
             gravity = Gravity.CENTER
-            background = UiKit.roundedDrawable(context, UiKit.ACCENT_AI_SOFT, 10f, UiKit.ACCENT_AI, 1f)
-            val sz = (32 * dp).toInt()
+            background = UiKit.skeuoIconWellDrawable(context, UiKit.ACCENT_AI_SOFT, 10f)
+            val sz = (34 * dp).toInt()
             layoutParams = LayoutParams(sz, sz).apply { marginEnd = (8 * dp).toInt() }
             setOnClickListener { onMicClicked?.invoke() }
         }
@@ -114,8 +108,8 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         }
         ramblerCol.addView(
             TextView(context).apply {
-                text = "Rambler •"
-                textSize = 13.5f
+                text = "Voice & Quick Edit"
+                textSize = 13f
                 typeface = Typeface.DEFAULT_BOLD
                 setTextColor(UiKit.TEXT_PRIMARY)
             }
@@ -179,7 +173,7 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         ramblerCard.addView(conciseBtn)
         addView(ramblerCard)
 
-        // 2. 4x2 Stitch Tool Grid
+        // 2. 4x2 Physical Skeuomorphic Tool Grid
         gridContainer = LinearLayout(context).apply {
             orientation = VERTICAL
             layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
@@ -188,67 +182,24 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         }
         addView(gridContainer)
 
-        // 3. Pinned / Recent AES-256 Clipboard Quick-Paste Card
-        clipCard = LinearLayout(context).apply {
-            orientation = HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-            setPadding((10 * dp).toInt(), (8 * dp).toInt(), (10 * dp).toInt(), (8 * dp).toInt())
-            layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                bottomMargin = (8 * dp).toInt()
-            }
-        }
-        val lockBadge = TextView(context).apply {
-            text = "🔒"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            background = UiKit.roundedDrawable(context, UiKit.SUCCESS_BG, 10f, UiKit.SUCCESS_BORDER, 1f)
-            val sz = (32 * dp).toInt()
-            layoutParams = LayoutParams(sz, sz).apply { marginEnd = (10 * dp).toInt() }
-        }
-        val clipCol = LinearLayout(context).apply {
-            orientation = VERTICAL
-            layoutParams = LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
-        }
-        clipTitleTv = TextView(context).apply {
-            text = "AES-256 • CLIPBOARD READY"
-            textSize = 10f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(UiKit.SUCCESS_FG)
-        }
-        clipPreviewTv = TextView(context).apply {
-            text = "Copy text in any app to pin or paste here"
-            textSize = 12f
-            typeface = Typeface.MONOSPACE
-            setSingleLine(true)
-            setTextColor(UiKit.TEXT_PRIMARY)
-        }
-        clipCol.addView(clipTitleTv)
-        clipCol.addView(clipPreviewTv)
-
-        clipPasteBtn = UiKit.createPillButton(context, "Paste", filled = true) {
-            latestClip?.let { onPasteClipClicked?.invoke(it.text) }
-        }.apply {
-            textSize = 12f
-            setPadding((12 * dp).toInt(), (6 * dp).toInt(), (12 * dp).toInt(), (6 * dp).toInt())
-        }
-        clipCard.addView(lockBadge)
-        clipCard.addView(clipCol)
-        clipCard.addView(clipPasteBtn)
-        addView(clipCard)
-
-        // 4. Bottom Return Strip
+        // 3. Bottom Navigation & Language Switch Bar
         val bottomRow = LinearLayout(context).apply {
             orientation = HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        backKeysBtn = UiKit.createPillButton(context, "⌨  Keyboard", filled = false) {
-            onCollapseClicked?.invoke()
-        }.apply {
+        backKeysBtn = TextView(context).apply {
+            text = "⌨  Keyboard"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setPadding((12 * dp).toInt(), (7 * dp).toInt(), (12 * dp).toInt(), (7 * dp).toInt())
             layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (38 * dp).toInt())
+            setOnClickListener { onCollapseClicked?.invoke() }
         }
         langPillTv = TextView(context).apply {
-            text = "English + Hinglish"
-            textSize = 12.5f
+            text = "🌐 English + Hinglish"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             layoutParams = LayoutParams(0, (38 * dp).toInt(), 1f).apply {
                 marginStart = (8 * dp).toInt()
@@ -256,10 +207,15 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
             }
             setOnClickListener { onToggleHinglishClicked?.invoke() }
         }
-        micPillBtn = UiKit.createPillButton(context, "🎙 Dictate", filled = true) {
-            onMicClicked?.invoke()
-        }.apply {
+        micPillBtn = TextView(context).apply {
+            text = "🎙 Dictate"
+            textSize = 12.5f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding((12 * dp).toInt(), (7 * dp).toInt(), (12 * dp).toInt(), (7 * dp).toInt())
             layoutParams = LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, (38 * dp).toInt())
+            setOnClickListener { onMicClicked?.invoke() }
         }
         bottomRow.addView(backKeysBtn)
         bottomRow.addView(langPillTv)
@@ -270,18 +226,8 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         syncRamblerChips()
     }
 
-    fun updateClipboardPreview(totalCount: Int, topItem: ClipboardItem?) {
+    fun updateClipboardCount(totalCount: Int) {
         clipCount = totalCount
-        latestClip = topItem
-        if (topItem != null) {
-            clipTitleTv.text = if (topItem.isPinned) "AES-256 • PINNED" else "AES-256 • RECENT CLIP"
-            clipPreviewTv.text = topItem.text.replace("\n", " ").take(42)
-            clipPasteBtn.visibility = View.VISIBLE
-        } else {
-            clipTitleTv.text = "AES-256 • ENCRYPTED VAULT"
-            clipPreviewTv.text = "No saved clips yet"
-            clipPasteBtn.visibility = View.GONE
-        }
         renderGrid()
     }
 
@@ -309,14 +255,11 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         if (!::gridContainer.isInitialized) return
         gridContainer.removeAllViews()
         val dp = resources.displayMetrics.density
+        val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
+        val bg = theme.keyboardBackground.colorStart
+        val surfaceFill = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
 
-        data class ToolTile(
-            val icon: String,
-            val label: String,
-            val badge: String? = null,
-            val active: Boolean = false,
-            val onClick: () -> Unit
-        )
+        data class ToolTile(val icon: String, val label: String, val badge: String? = null, val active: Boolean = false, val onClick: () -> Unit)
 
         val tiles = listOf(
             ToolTile("📋", "Clipboard", if (clipCount > 0) clipCount.toString() else null) { onOpenClipboardClicked?.invoke() },
@@ -329,30 +272,31 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
             ToolTile("⚙", "Settings") { onOpenSettingsClicked?.invoke() }
         )
 
-        val accent = theme.accentKeyColor ?: UiKit.ACCENT_PRIMARY
-        val surfaceFill = theme.keyFaceColor.primaryColor
-
-        for (rowIdx in 0 until 2) {
+        val rows = tiles.chunked(4)
+        rows.forEachIndexed { rIdx, rowTiles ->
             val row = LinearLayout(context).apply {
                 orientation = HORIZONTAL
                 layoutParams = LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-                    if (rowIdx == 0) bottomMargin = (6 * dp).toInt()
+                    if (rIdx < rows.lastIndex) bottomMargin = (6 * dp).toInt()
                 }
             }
-            for (colIdx in 0 until 4) {
-                val tile = tiles[rowIdx * 4 + colIdx]
+            rowTiles.forEachIndexed { colIdx, tile ->
+                val cardFill = if (tile.active) {
+                    UiKit.blendColors(surfaceFill, accent, 0.35f)
+                } else {
+                    surfaceFill
+                }
                 val card = LinearLayout(context).apply {
                     orientation = VERTICAL
                     gravity = Gravity.CENTER
-                    background = UiKit.roundedDrawable(
+                    background = UiKit.skeuoButtonDrawable(
                         context,
-                        if (tile.active) Color.argb(46, Color.red(accent), Color.green(accent), Color.blue(accent)) else surfaceFill,
+                        cardFill,
                         12f,
-                        if (tile.active) accent else theme.keyBorderColor,
-                        1f
+                        if (tile.active) accent else theme.keyBorderColor
                     )
                     setPadding((4 * dp).toInt(), (8 * dp).toInt(), (4 * dp).toInt(), (8 * dp).toInt())
-                    layoutParams = LayoutParams(0, (60 * dp).toInt(), 1f).apply {
+                    layoutParams = LayoutParams(0, (62 * dp).toInt(), 1f).apply {
                         if (colIdx < 3) marginEnd = (6 * dp).toInt()
                     }
                     setOnClickListener { tile.onClick() }
@@ -400,22 +344,26 @@ class ExpandedToolsPanelView @JvmOverloads constructor(
         }
 
         if (::langPillTv.isInitialized) {
-            langPillTv.text = if (isHinglishEnabled) "🌐 English + Hinglish" else "🌐 English • QWERTY"
+            langPillTv.text = if (isHinglishEnabled) "🌐 English + Hinglish" else "🌐 English Only"
         }
     }
 
     private fun applyTheme() {
-        setBackgroundColor(theme.keyboardBackground.colorStart)
-        val cardFill = theme.functionalKeyColor ?: UiKit.SURFACE_CARD
+        val bg = theme.keyboardBackground.colorStart
+        setBackgroundColor(bg)
+        val accent = theme.effectColors.firstOrNull() ?: theme.accentKeyColor ?: theme.trailColor
+        val cardFill = KeyboardEffectEngine.compositeOver(theme.functionalKeyColor ?: theme.keyFaceColor.primaryColor, bg)
         val border = theme.keyBorderColor
-        ramblerCard.background = UiKit.roundedDrawable(context, cardFill, 14f, border, 1f)
-        clipCard.background = UiKit.roundedDrawable(context, cardFill, 14f, border, 1f)
-        langPillTv.background = UiKit.roundedDrawable(context, cardFill, 12f, border, 1f)
-        langPillTv.setTextColor(theme.keyLabelColorSecondary)
+        ramblerCard.background = UiKit.skeuoCardDrawable(context, cardFill, 14f, border, 2f)
+        langPillTv.background = UiKit.skeuoButtonDrawable(context, cardFill, 11f, border)
+        langPillTv.setTextColor(theme.keyLabelColorPrimary)
+        backKeysBtn.background = UiKit.skeuoButtonDrawable(context, cardFill, 11f, border)
+        backKeysBtn.setTextColor(theme.keyLabelColorPrimary)
+        micPillBtn.background = UiKit.skeuoButtonDrawable(context, accent, 11f)
 
-        val chipFill = theme.keyFaceColor.primaryColor
+        val chipFill = KeyboardEffectEngine.compositeOver(theme.keyFaceColor.primaryColor, bg)
         for (btn in listOf(fixItBtn, formalBtn, conciseBtn)) {
-            btn.background = UiKit.roundedDrawable(context, chipFill, 9f, border, 1f)
+            btn.background = UiKit.skeuoButtonDrawable(context, chipFill, 9f, border)
             btn.setTextColor(theme.keyLabelColorPrimary)
         }
         renderGrid()

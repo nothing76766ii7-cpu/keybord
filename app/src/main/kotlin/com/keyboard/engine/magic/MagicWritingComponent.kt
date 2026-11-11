@@ -39,7 +39,9 @@ enum class WritingStyle(val displayName: String, val promptInstruction: String) 
     CONCISE("Concise", "Make it more concise and directly to the point."),
     ELABORATE("Elaborate", "Expand on details and explain more thoroughly."),
     EMOJIFY("Emojify", "Add expressive emojis naturally throughout the text."),
-    POETIC("Poetic", "Rewrite it with lyrical rhythm and poetic flair.")
+    POETIC("Poetic", "Rewrite it with lyrical rhythm and poetic flair."),
+    PROFESSIONAL("Professional", "Polish into clear, courteous, executive business communication."),
+    FRIENDLY("Friendly", "Make it warm, encouraging, approachable, and upbeat.")
 }
 
 enum class CorrectionType {
@@ -333,6 +335,8 @@ class StyleRewriteEngine {
             WritingStyle.ELABORATE -> elaborate(trimmed)
             WritingStyle.EMOJIFY -> emojify(trimmed)
             WritingStyle.POETIC -> makePoetic(trimmed)
+            WritingStyle.PROFESSIONAL -> makeProfessional(trimmed)
+            WritingStyle.FRIENDLY -> makeFriendly(trimmed)
         }
 
         val followUps = generateFollowUpSuggestions(style)
@@ -398,6 +402,29 @@ class StyleRewriteEngine {
         return "Beneath the sky of quiet thought, $base, as destiny softly sought."
     }
 
+    private fun makeProfessional(text: String): String {
+        var res = formalize(text)
+        if (!res.startsWith("Hello", ignoreCase = true) && !res.startsWith("Hi", ignoreCase = true) && !res.startsWith("Please", ignoreCase = true)) {
+            val loweredStart = res.replaceFirstChar { it.lowercase() }
+            res = "Please note: $loweredStart"
+        }
+        if (!res.endsWith(".") && !res.endsWith("?") && !res.endsWith("!")) res += "."
+        return res
+    }
+
+    private fun makeFriendly(text: String): String {
+        var res = text.trim().replaceFirstChar { it.uppercase() }
+        if (!res.startsWith("Hey", ignoreCase = true) && !res.startsWith("Hi", ignoreCase = true)) {
+            res = "Hey! $res"
+        }
+        if (res.endsWith(".")) {
+            res = res.dropLast(1) + "!"
+        } else if (!res.endsWith("!") && !res.endsWith("?")) {
+            res += "!"
+        }
+        return "$res 😊"
+    }
+
     private fun generateFollowUpSuggestions(style: WritingStyle): List<String> {
         return when (style) {
             WritingStyle.FORMAL -> listOf("Add greeting", "Make more concise", "Include deadline")
@@ -406,6 +433,8 @@ class StyleRewriteEngine {
             WritingStyle.ELABORATE -> listOf("Summarize", "Make polite", "Request review")
             WritingStyle.EMOJIFY -> listOf("More emojis", "Make casual", "Tone down")
             WritingStyle.POETIC -> listOf("Make playful", "Shorter verse", "Rhyme more")
+            WritingStyle.PROFESSIONAL -> listOf("Add closing", "Make shorter", "Request feedback")
+            WritingStyle.FRIENDLY -> listOf("Add thanks", "Keep warm", "Shorten")
         }
     }
 }

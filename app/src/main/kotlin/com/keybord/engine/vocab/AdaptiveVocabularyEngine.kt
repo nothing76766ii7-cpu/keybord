@@ -19,8 +19,44 @@ class AdaptiveVocabularyEngine(
     val personalDictionary = PersonalDictionaryManager(context)
     var staticLexicon: com.keybord.engine.glide.TrieLexicon? = null
 
+    private val writeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "KeybordVocabWriter").apply { isDaemon = true }
+    }
+    private val penaltyCache = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
     fun getBigramScore(prevWord: String, word: String): Float =
         storage.getBigramScore(prevWord, word)
+
+    /**
+     * Offloads DB unigram/bigram/trigram persistence off the main UI thread during continuous typing.
+     */
+    fun onWordCommittedAsync(
+        word: String,
+        contextWords: List<String> = emptyList(),
+        event: LearningEvent = LearningEvent.NORMAL_TYPING
+    ) {
+        val contextSnapshot = contextWords.toList()
+        writeExecutor.execute {
+            try {
+                onWordCommitted(word, contextSnapshot, event)
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal(
+                    "AdaptiveVocabEngine",
+                    "Async word commit failed",
+                    e
+                )
+            }
+        }
+    }
+
+    fun shutdown() {
+        writeExecutor.shutdownNow()
+        try {
+            storage.close()
+        } catch (_: Exception) {
+            // Ignore close during shutdown
+        }
+    }
 
     /**
      * Called whenever a word is committed to the text input field.
@@ -75,7 +111,20 @@ class AdaptiveVocabularyEngine(
      */
     fun onManualCorrection(revertedWord: String, correctedWord: String, contextWords: List<String>) {
         storage.recordRejection(revertedWord, config.rejectionPenalty)
+        penaltyCache.remove(revertedWord.lowercase().trim())
         onWordCommitted(correctedWord, contextWords, LearningEvent.MANUAL_CORRECTION)
+    }
+
+    fun onManualCorrectionAsync(revertedWord: String, correctedWord: String, contextWords: List<String>) {
+        penaltyCache.remove(revertedWord.lowercase().trim())
+        val ctx = contextWords.toList()
+        writeExecutor.execute {
+            try {
+                onManualCorrection(revertedWord, correctedWord, ctx)
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async manual correction failed", e)
+            }
+        }
     }
 
     /**
@@ -83,6 +132,18 @@ class AdaptiveVocabularyEngine(
      */
     fun onScrubDelete(deletedWord: String) {
         storage.recordRejection(deletedWord, config.rejectionPenalty)
+        penaltyCache.remove(deletedWord.lowercase().trim())
+    }
+
+    fun onScrubDeleteAsync(deletedWord: String) {
+        penaltyCache.remove(deletedWord.lowercase().trim())
+        writeExecutor.execute {
+            try {
+                onScrubDelete(deletedWord)
+            } catch (e: Exception) {
+                com.keybord.diagnostics.KeybordCrashLogger.recordNonFatal("AdaptiveVocabEngine", "Async scrub delete failed", e)
+            }
+        }
     }
 
     /**
@@ -90,6 +151,7 @@ class AdaptiveVocabularyEngine(
      */
     fun deleteLearnedWord(word: String) {
         storage.deleteWord(word)
+        penaltyCache.remove(word.lowercase().trim())
         personalDictionary.deleteWord(word)
     }
 
@@ -165,7 +227,7 @@ class AdaptiveVocabularyEngine(
 
     /**
      * Ranks prefix completion candidates blending shortcuts, user history n-grams,
-     * and static English + Hinglish lexicon completions.
+     * and static English + Hinglish lexicon completions without N+1 SQLite queries.
      */
     fun rankPrefixCompletions(
         prefix: String,
@@ -196,27 +258,30 @@ class AdaptiveVocabularyEngine(
             seen.add(shortcutExpansion.lowercase())
         }
 
-        // Query user history completions
+        // Query user history completions and fetch bigram context ONCE outside loop
         val userEntries = storage.searchPrefix(cleanPrefix, limit = 15)
         val prev1 = contextWords.lastOrNull()?.lowercase()?.trim()
+        val prevBigrams = if (prev1 != null && userEntries.isNotEmpty()) {
+            storage.getBigramCompletions(prev1, limit = 12).map { it.first }.toHashSet()
+        } else {
+            emptySet()
+        }
 
         for (entry in userEntries) {
-            if (!seen.add(entry.word.lowercase())) continue
+            val lowerWord = entry.word.lowercase()
+            if (!seen.add(lowerWord)) continue
 
-            val penalty = storage.getRejectionPenalty(entry.word)
+            val penalty = penaltyCache.getOrPut(lowerWord) {
+                storage.getRejectionPenalty(lowerWord)
+            }
+            if (penaltyCache.size > 512) penaltyCache.clear()
             val effectiveCount = (entry.count - penalty).coerceAtLeast(1)
 
             val freqScore = (ln(effectiveCount.toFloat() + 1f) / ln(100f)).coerceIn(0f, 1f)
             val age = (now - entry.lastUsedTimestamp).coerceAtLeast(0L)
             val recencyScore = exp(-ln(2f) * (age / halfLifeMillis))
 
-            var contextScore = 0f
-            if (prev1 != null) {
-                val bigrams = storage.getBigramCompletions(prev1, limit = 10)
-                if (bigrams.any { it.first == entry.word }) {
-                    contextScore = 0.5f
-                }
-            }
+            val contextScore = if (prevBigrams.contains(entry.word)) 0.5f else 0f
 
             val totalScore = config.frequencyWeight * freqScore +
                 config.recencyWeight * recencyScore +

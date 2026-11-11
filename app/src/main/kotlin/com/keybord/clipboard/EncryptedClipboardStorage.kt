@@ -22,6 +22,18 @@ class EncryptedClipboardStorage(
 
     private val secretKey: SecretKeySpec
     private val secureRandom = SecureRandom()
+    private val dbLock = Any()
+
+    override fun onConfigure(db: SQLiteDatabase) {
+        super.onConfigure(db)
+        if (dbName != null) {
+            try {
+                db.enableWriteAheadLogging()
+            } catch (_: Exception) {
+                // Ignore if unsupported
+            }
+        }
+    }
 
     init {
         // Derive or fallback to a deterministic 256-bit key for local encryption
@@ -132,59 +144,59 @@ class EncryptedClipboardStorage(
     ): Long {
         if (text.isBlank()) return -1L
 
-        // Check if duplicate of most recent item to avoid identical consecutive spam
-        val recentItems = getRecentItems(1)
-        if (recentItems.isNotEmpty() && recentItems.first().text == text) {
-            // Bump timestamp and return existing
-            val existing = recentItems.first()
-            val cv = ContentValues().apply {
-                put("created_at", System.currentTimeMillis())
+        synchronized(dbLock) {
+            // Check if duplicate of most recent item to avoid identical consecutive spam
+            val recentItems = getRecentItems(1)
+            if (recentItems.isNotEmpty() && recentItems.first().text == text) {
+                val existing = recentItems.first()
+                val cv = ContentValues().apply {
+                    put("created_at", System.currentTimeMillis())
+                }
+                writableDatabase.update("clipboard_items", cv, "id = ?", arrayOf(existing.id.toString()))
+                return existing.id
             }
-            writableDatabase.update("clipboard_items", cv, "id = ?", arrayOf(existing.id.toString()))
-            return existing.id
+
+            val (encryptedData, iv) = encrypt(text)
+            val cv = ContentValues().apply {
+                put("encrypted_data", encryptedData)
+                put("iv", iv)
+                put("category", category)
+                put("is_pinned", if (isPinned) 1 else 0)
+                put("created_at", System.currentTimeMillis())
+                put("source_package", sourcePackage)
+                put("is_sensitive", if (isSensitive) 1 else 0)
+            }
+
+            val id = writableDatabase.insert("clipboard_items", null, cv)
+
+            // Apply retention rules
+            applyRetentionPolicy(retentionPolicy, capacityLimit)
+            return id
         }
-
-        val (encryptedData, iv) = encrypt(text)
-        val cv = ContentValues().apply {
-            put("encrypted_data", encryptedData)
-            put("iv", iv)
-            put("category", category)
-            put("is_pinned", if (isPinned) 1 else 0)
-            put("created_at", System.currentTimeMillis())
-            put("source_package", sourcePackage)
-            put("is_sensitive", if (isSensitive) 1 else 0)
-        }
-
-        val id = writableDatabase.insert("clipboard_items", null, cv)
-
-        // Apply retention rules
-        applyRetentionPolicy(retentionPolicy, capacityLimit)
-        return id
     }
 
-    fun getItem(id: Long): ClipboardItem? {
-        val cursor = readableDatabase.rawQuery(
+    fun getItem(id: Long): ClipboardItem? = synchronized(dbLock) {
+        readableDatabase.rawQuery(
             "SELECT id, encrypted_data, iv, category, is_pinned, created_at, source_package, is_sensitive FROM clipboard_items WHERE id = ?",
             arrayOf(id.toString())
-        )
-        val item = if (cursor.moveToFirst()) {
-            val cipherData = cursor.getBlob(1)
-            val iv = cursor.getBlob(2)
-            ClipboardItem(
-                id = cursor.getLong(0),
-                text = decrypt(cipherData, iv),
-                category = cursor.getString(3),
-                isPinned = cursor.getInt(4) == 1,
-                createdAt = cursor.getLong(5),
-                sourcePackage = cursor.getString(6),
-                isSensitive = cursor.getInt(7) == 1
-            )
-        } else null
-        cursor.close()
-        return item
+        ).use { cursor ->
+            if (cursor.moveToFirst()) {
+                val cipherData = cursor.getBlob(1)
+                val iv = cursor.getBlob(2)
+                ClipboardItem(
+                    id = cursor.getLong(0),
+                    text = decrypt(cipherData, iv),
+                    category = cursor.getString(3),
+                    isPinned = cursor.getInt(4) == 1,
+                    createdAt = cursor.getLong(5),
+                    sourcePackage = cursor.getString(6),
+                    isSensitive = cursor.getInt(7) == 1
+                )
+            } else null
+        }
     }
 
-    fun getAllItems(categoryFilter: String? = null): List<ClipboardItem> {
+    fun getAllItems(categoryFilter: String? = null): List<ClipboardItem> = synchronized(dbLock) {
         val query = if (categoryFilter.isNullOrBlank() || categoryFilter == "All") {
             "SELECT id, encrypted_data, iv, category, is_pinned, created_at, source_package, is_sensitive FROM clipboard_items ORDER BY is_pinned DESC, created_at DESC"
         } else {
@@ -192,75 +204,75 @@ class EncryptedClipboardStorage(
         }
         val args = if (categoryFilter.isNullOrBlank() || categoryFilter == "All") null else arrayOf(categoryFilter)
 
-        val cursor = readableDatabase.rawQuery(query, args)
         val items = mutableListOf<ClipboardItem>()
-        while (cursor.moveToNext()) {
-            val cipherData = cursor.getBlob(1)
-            val iv = cursor.getBlob(2)
-            items.add(
-                ClipboardItem(
-                    id = cursor.getLong(0),
-                    text = decrypt(cipherData, iv),
-                    category = cursor.getString(3),
-                    isPinned = cursor.getInt(4) == 1,
-                    createdAt = cursor.getLong(5),
-                    sourcePackage = cursor.getString(6),
-                    isSensitive = cursor.getInt(7) == 1
+        readableDatabase.rawQuery(query, args).use { cursor ->
+            while (cursor.moveToNext()) {
+                val cipherData = cursor.getBlob(1)
+                val iv = cursor.getBlob(2)
+                items.add(
+                    ClipboardItem(
+                        id = cursor.getLong(0),
+                        text = decrypt(cipherData, iv),
+                        category = cursor.getString(3),
+                        isPinned = cursor.getInt(4) == 1,
+                        createdAt = cursor.getLong(5),
+                        sourcePackage = cursor.getString(6),
+                        isSensitive = cursor.getInt(7) == 1
+                    )
                 )
-            )
+            }
         }
-        cursor.close()
-        return items
+        items
     }
 
-    fun getPinnedItems(): List<ClipboardItem> {
-        val cursor = readableDatabase.rawQuery(
+    fun getPinnedItems(): List<ClipboardItem> = synchronized(dbLock) {
+        val items = mutableListOf<ClipboardItem>()
+        readableDatabase.rawQuery(
             "SELECT id, encrypted_data, iv, category, is_pinned, created_at, source_package, is_sensitive FROM clipboard_items WHERE is_pinned = 1 ORDER BY created_at DESC",
             null
-        )
-        val items = mutableListOf<ClipboardItem>()
-        while (cursor.moveToNext()) {
-            val cipherData = cursor.getBlob(1)
-            val iv = cursor.getBlob(2)
-            items.add(
-                ClipboardItem(
-                    id = cursor.getLong(0),
-                    text = decrypt(cipherData, iv),
-                    category = cursor.getString(3),
-                    isPinned = true,
-                    createdAt = cursor.getLong(5),
-                    sourcePackage = cursor.getString(6),
-                    isSensitive = cursor.getInt(7) == 1
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val cipherData = cursor.getBlob(1)
+                val iv = cursor.getBlob(2)
+                items.add(
+                    ClipboardItem(
+                        id = cursor.getLong(0),
+                        text = decrypt(cipherData, iv),
+                        category = cursor.getString(3),
+                        isPinned = true,
+                        createdAt = cursor.getLong(5),
+                        sourcePackage = cursor.getString(6),
+                        isSensitive = cursor.getInt(7) == 1
+                    )
                 )
-            )
+            }
         }
-        cursor.close()
-        return items
+        items
     }
 
-    fun getRecentItems(limit: Int = 3): List<ClipboardItem> {
-        val cursor = readableDatabase.rawQuery(
+    fun getRecentItems(limit: Int = 3): List<ClipboardItem> = synchronized(dbLock) {
+        val items = mutableListOf<ClipboardItem>()
+        readableDatabase.rawQuery(
             "SELECT id, encrypted_data, iv, category, is_pinned, created_at, source_package, is_sensitive FROM clipboard_items ORDER BY created_at DESC LIMIT ?",
             arrayOf(limit.toString())
-        )
-        val items = mutableListOf<ClipboardItem>()
-        while (cursor.moveToNext()) {
-            val cipherData = cursor.getBlob(1)
-            val iv = cursor.getBlob(2)
-            items.add(
-                ClipboardItem(
-                    id = cursor.getLong(0),
-                    text = decrypt(cipherData, iv),
-                    category = cursor.getString(3),
-                    isPinned = cursor.getInt(4) == 1,
-                    createdAt = cursor.getLong(5),
-                    sourcePackage = cursor.getString(6),
-                    isSensitive = cursor.getInt(7) == 1
+        ).use { cursor ->
+            while (cursor.moveToNext()) {
+                val cipherData = cursor.getBlob(1)
+                val iv = cursor.getBlob(2)
+                items.add(
+                    ClipboardItem(
+                        id = cursor.getLong(0),
+                        text = decrypt(cipherData, iv),
+                        category = cursor.getString(3),
+                        isPinned = cursor.getInt(4) == 1,
+                        createdAt = cursor.getLong(5),
+                        sourcePackage = cursor.getString(6),
+                        isSensitive = cursor.getInt(7) == 1
+                    )
                 )
-            )
+            }
         }
-        cursor.close()
-        return items
+        items
     }
 
     /**

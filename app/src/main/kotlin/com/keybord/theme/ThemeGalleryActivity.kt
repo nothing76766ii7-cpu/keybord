@@ -270,13 +270,11 @@ class ThemeGalleryActivity : AppCompatActivity() {
                 textSize = 12f
                 typeface = if (isSelected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                 setTextColor(if (isSelected) Color.WHITE else UiKit.TEXT_SECONDARY)
-                background = UiKit.roundedDrawable(
-                    this@ThemeGalleryActivity,
-                    if (isSelected) UiKit.ACCENT_PRIMARY else UiKit.SURFACE_CARD,
-                    12f,
-                    if (isSelected) null else UiKit.BORDER_SUBTLE,
-                    1f
-                )
+                background = if (isSelected) {
+                    UiKit.skeuoButtonDrawable(this@ThemeGalleryActivity, UiKit.ACCENT_PRIMARY, 12f)
+                } else {
+                    UiKit.skeuoCardDrawable(this@ThemeGalleryActivity, UiKit.SURFACE_CARD, 12f, UiKit.BORDER_SUBTLE, 1.5f)
+                }
                 setPadding((12 * dp).toInt(), (7 * dp).toInt(), (12 * dp).toInt(), (7 * dp).toInt())
                 layoutParams = LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -502,16 +500,19 @@ class ThemeGalleryActivity : AppCompatActivity() {
             if (theme.effectStyle != EffectStyle.NONE && theme.effectStyle.badge.isNotEmpty()) {
                 holder.effectBadge.text = theme.effectStyle.badge
                 holder.effectBadge.visibility = View.VISIBLE
+            } else if (theme.materialFinish != MaterialFinish.MATTE) {
+                holder.effectBadge.text = theme.materialFinish.displayName.substringBefore(' ')
+                holder.effectBadge.visibility = View.VISIBLE
             } else {
                 holder.effectBadge.visibility = View.GONE
             }
 
-            holder.view.background = UiKit.roundedDrawable(
+            holder.view.background = UiKit.skeuoCardDrawable(
                 holder.view.context,
                 if (isActive) Color.parseColor("#1D273B") else UiKit.SURFACE_CARD,
                 16f,
                 if (isActive) UiKit.ACCENT_PRIMARY else UiKit.BORDER_SUBTLE,
-                if (isActive) 2f else 1f
+                if (isActive) 3.5f else 2f
             )
 
             holder.view.setOnClickListener { onThemeSelected(theme) }
