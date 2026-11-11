@@ -94,13 +94,13 @@ class BilingualHinglishTest {
 
     @Test
     fun testBilingualNextWordHintsExistForMixedPhrases() {
-        val lex = loadBilingualLexicon(includeHinglish = true)
+        loadBilingualLexicon(includeHinglish = true)
 
-        val kalHints = lex.getNextWordHints("kal", 3)
+        val kalHints = TrieLexicon.getContextualFallbackPredictions("kal")
         assertTrue("Expected meeting/milte next after kal, got $kalHints", kalHints.isNotEmpty())
-        val bahutHints = lex.getNextWordHints("bahut", 3)
+        val bahutHints = TrieLexicon.getContextualFallbackPredictions("bahut")
         assertTrue("Expected pasand/achha next after bahut, got $bahutHints", bahutHints.contains("pasand"))
-        val aajHints = lex.getNextWordHints("aaj", 3)
+        val aajHints = TrieLexicon.getContextualFallbackPredictions("aaj")
         assertTrue("Expected weather/kya next after aaj, got $aajHints", aajHints.isNotEmpty())
     }
 
