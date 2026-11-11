@@ -1,5 +1,6 @@
 package com.keybord.engine
 
+import android.graphics.RectF
 import com.keybord.engine.glide.GlideDecoder
 import com.keybord.engine.glide.KeyPosition
 import com.keybord.engine.glide.TouchPoint
@@ -26,11 +27,10 @@ class ConcurrencyStabilityTest {
                 val x = 50f + colIdx * 90f + rowIdx * 25f
                 val y = 60f + rowIdx * 110f
                 map[ch] = KeyPosition(
-                    char = ch,
+                    character = ch,
+                    bounds = RectF(x - 43f, y - 52f, x + 43f, y + 52f),
                     centerX = x,
-                    centerY = y,
-                    width = 86f,
-                    height = 104f
+                    centerY = y
                 )
             }
         }
